@@ -30,11 +30,10 @@
   <!-- Library Grafik & Ikon -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.1.9/Recharts.js"></script>
   <script src="https://unpkg.com/lucide-react@0.292.0/dist/umd/lucide-react.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
   <!-- Babel untuk JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- jsQR fallback for QR scanning -->
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
   <style>
     body { margin: 0; padding: 0; background-color: #E0F2F1; }
@@ -71,17 +70,17 @@
 
     // --- Safe Imports for Lucide Icons ---
     const LucideLib = window.lucideReact || window.lucide || window.LucideReact || window.Lucide || {};
-    const FallbackIcon = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const EditIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const TrashIconFallback = () => <span className="fallback-icon text-xs px-1">???</span>;
-    const SaveIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const PlusIconFallback = () => <span className="fallback-icon text-xs px-1">?</span>;
-    const CheckIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const XIconFallback = () => <span className="fallback-icon text-xs px-1">?</span>;
-    const CameraIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const ClockIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const FileTextIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
-    const CalendarIconFallback = () => <span className="fallback-icon text-xs px-1">??</span>;
+    const FallbackIcon = () => <span className="fallback-icon text-xs px-1">🔹</span>;
+    const EditIconFallback = () => <span className="fallback-icon text-xs px-1">✏️</span>;
+    const TrashIconFallback = () => <span className="fallback-icon text-xs px-1">🗑️</span>;
+    const SaveIconFallback = () => <span className="fallback-icon text-xs px-1">💾</span>;
+    const PlusIconFallback = () => <span className="fallback-icon text-xs px-1">➕</span>;
+    const CheckIconFallback = () => <span className="fallback-icon text-xs px-1">✔️</span>;
+    const XIconFallback = () => <span className="fallback-icon text-xs px-1">❌</span>;
+    const CameraIconFallback = () => <span className="fallback-icon text-xs px-1">📷</span>;
+    const ClockIconFallback = () => <span className="fallback-icon text-xs px-1">🕒</span>;
+    const FileTextIconFallback = () => <span className="fallback-icon text-xs px-1">📄</span>;
+    const CalendarIconFallback = () => <span className="fallback-icon text-xs px-1">📅</span>;
 
     const { 
       MapPin = FallbackIcon, Camera = CameraIconFallback, ScanLine = FallbackIcon, Clock = ClockIconFallback, 
@@ -99,10 +98,6 @@
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.789063 };
     const RADIUS_TOLERANCE_METERS = 100;
-    const GPS_MAX_RETRIES = 3;
-    const GPS_RETRY_DELAY_MS = 3000;
-    const GPS_TIMEOUT_MS = 15000;
-    const QR_SCAN_INTERVAL_MS = 220;
     const COLORS = { hadir: '#00F0FF', telat: '#FFB800', absen: '#FF003C', purple: '#B026FF', orange: '#FF5E00', lightPrimary: '#0070BA' };
 
     // --- HELPER FUNCTIONS ---
@@ -637,28 +632,17 @@
       }, [isDataLoaded]);
 
       useEffect(() => { 
-        const requestPermissions = async () => { 
-          try { 
-            if ("geolocation" in navigator) { navigator.geolocation.getCurrentPosition(() => {}, () => {}, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }); }
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); stream.getTracks().forEach(track => track.stop()); }
-          } catch (err) {}
-        };
+        const requestPermissions = async () => { try { if ("geolocation" in navigator) { navigator.geolocation.getCurrentPosition(() => {}, () => {}); } if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); stream.getTracks().forEach(track => track.stop()); } } catch (err) {} };
         requestPermissions(); 
       }, []);
 
       const submitLogin = async (e) => {
         e.preventDefault(); setIsLoading(true); setError('');
         if (!username || !password) { setError('Lengkapi ID Karyawan dan Kata Sandi.'); setIsLoading(false); return; }
-
         let gpsOk = true; let camOk = true;
-        try { await new Promise((resolve, reject) => { if (!navigator.geolocation) reject(); else navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }); }); } catch (err) { gpsOk = false; }
-        try { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); stream.getTracks().forEach(t => t.stop()); } catch (err) { camOk = false; }
-
-        if ((!gpsOk || !camOk) && !bypassAllowed) {
-          setError('Akses Lokasi atau Kamera belum diizinkan. Klik TETAP MASUK jika ingin melanjutkan.');
-          setBypassAllowed(true);
-        }
-
+        try { await new Promise((resolve, reject) => { if (!navigator.geolocation) reject(); else navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 2000}); }); } catch(err) { gpsOk = false; }
+        try { const stream = await navigator.mediaDevices.getUserMedia({video: true}); stream.getTracks().forEach(t=>t.stop()); } catch(err) { camOk = false; }
+        if ((!gpsOk || !camOk) && !bypassAllowed) { setError('Akses Lokasi atau Kamera belum diizinkan. Izinkan di browser, atau klik TETAP MASUK.'); setBypassAllowed(true); setIsLoading(false); return; }
         try { await onLogin({ username, password }); } catch (err) { setError(err.message); } finally { setIsLoading(false); }
       };
 
@@ -901,63 +885,42 @@
       const [currentCoord, setCurrentCoord] = useState({ lat: 0, lng: 0 });
       const [isProcessing, setIsProcessing] = useState(false); const [result, setResult] = useState(null); const [capturedPhoto, setCapturedPhoto] = useState(null);
       const [outOfRadiusWarning, setOutOfRadiusWarning] = useState(false);
-      const videoRef = useRef(null); const topRef = useRef(null); const scanInProgressRef = useRef(false); const [currentTime, setCurrentTime] = useState(new Date());
+      const [qrWarning, setQrWarning] = useState(false);
+      const videoRef = useRef(null); const topRef = useRef(null); const [currentTime, setCurrentTime] = useState(new Date());
 
       useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
       useEffect(() => { if (topRef.current) topRef.current.scrollIntoView({ behavior: 'smooth' }); }, []);
       
       useEffect(() => { 
-         if (!("geolocation" in navigator)) { setLocationName('GPS tidak tersedia'); return; }
-         let watchId = null; let retryTimer = null; let attempt = 0;
-         const startWatch = () => {
-           attempt += 1; setLocationName('Memuat posisi GPS...');
-           if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-           watchId = navigator.geolocation.watchPosition(async (pos) => {
-              if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-              const lat = pos.coords.latitude; const lng = pos.coords.longitude;
-              setCurrentCoord({ lat, lng }); setDistance(calculateDistance(lat, lng, OFFICE_COORD.lat, OFFICE_COORD.lng));
-              try {
-                 const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=id`);
-                 const data = await res.json();
-                 let locStr = data.display_name;
-                 if (data.address) {
-                   const building = data.address.building || data.address.amenity || data.address.office;
-                   const road = data.address.road;
-                   const city = data.address.city || data.address.town || data.address.county;
-                   let parts = [];
-                   if (building) parts.push(building);
-                   if (road) parts.push(road);
-                   if (city) parts.push(city);
-                   if (parts.length > 0) locStr = parts.join(', ');
-                 }
-                 setLocationName(locStr);
-              } catch (e) {
-                 setLocationName(`Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`);
-              }
-           }, (err) => {
-              setDistance(0);
-              if (attempt < GPS_MAX_RETRIES) {
-                 setLocationName('Mencoba ulang GPS...');
-                 retryTimer = setTimeout(startWatch, GPS_RETRY_DELAY_MS);
-              } else {
-                 const msg = err.code === 1 ? 'GPS ditolak. Izinkan lokasi.' : err.code === 2 ? 'Sinyal GPS lemah. Periksa lokasi.' : 'GPS tidak tersedia. Periksa koneksi.';
-                 setLocationName(msg);
-              }
-           }, { enableHighAccuracy: true, maximumAge: 0, timeout: GPS_TIMEOUT_MS });
-         };
-         startWatch();
-         return () => { if (watchId !== null) navigator.geolocation.clearWatch(watchId); if (retryTimer) clearTimeout(retryTimer); };
+         if (!("geolocation" in navigator)) return;
+         let watchId = navigator.geolocation.watchPosition(async (pos) => { 
+            const lat = pos.coords.latitude; const lng = pos.coords.longitude; setCurrentCoord({ lat, lng }); setDistance(calculateDistance(lat, lng, OFFICE_COORD.lat, OFFICE_COORD.lng)); 
+            try {
+               const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=id`);
+               const data = await res.json(); 
+               let locStr = data.display_name;
+               if (data.address) {
+                 const addr = data.address;
+                 const building = addr.building || addr.amenity || addr.office; 
+                 const road = addr.road || addr.street; 
+                 const village = addr.village || addr.suburb || addr.neighbourhood;
+                 const district = addr.city_district || addr.county;
+                 const city = addr.city || addr.town || addr.municipality; 
+                 let parts = []; 
+                 if (building) parts.push(building); 
+                 if (road) parts.push(road); 
+                 if (village) parts.push(village);
+                 if (district) parts.push(district);
+                 if (city) parts.push(city);
+                 if (parts.length > 0) locStr = parts.join(', ');
+                 else locStr = data.display_name;
+               } setLocationName(locStr);
+            } catch(e) { setLocationName(`Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`); }
+         }, (err) => { setDistance(0); setLocationName('Akses GPS Gagal / Ditolak'); }, { enableHighAccuracy: true, maximumAge: 0 }); 
+         return () => navigator.geolocation.clearWatch(watchId);
       }, []);
 
       useEffect(() => { if (distance > RADIUS_TOLERANCE_METERS && method === 'barcode') { setMethod('selfie'); setOutOfRadiusWarning(true); setTimeout(() => setOutOfRadiusWarning(false), 6000); } }, [distance, method]);
-
-      const stopVideoStream = () => {
-        if (videoRef.current && videoRef.current.srcObject) {
-          const stream = videoRef.current.srcObject;
-          if (stream.getTracks) { stream.getTracks().forEach(track => track.stop()); }
-          videoRef.current.srcObject = null;
-        }
-      };
 
       useEffect(() => {
         let currentStream;
@@ -976,17 +939,28 @@
           checkTimer = setInterval(async () => {
             if (videoRef.current && videoRef.current.readyState === 4) {
               try {
+                let detectedCode = null;
                 if ('BarcodeDetector' in window) {
                   const detector = new window.BarcodeDetector(); const barcodes = await detector.detect(videoRef.current);
-                  if (barcodes.length > 0) { clearInterval(checkTimer); handleAction(); return; }
-                } else if (window.jsQR) {
-                  const canvas = document.createElement('canvas'); const context = canvas.getContext('2d'); canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight; context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height); const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                  if (barcodes.length > 0) { detectedCode = barcodes[0].rawValue; }
+                } 
+                if (!detectedCode && window.jsQR) {
+                  const canvas = document.createElement('canvas'); const context = canvas.getContext('2d', { willReadFrequently: true }); canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight; context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height); const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
                   const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-                  if (code) { clearInterval(checkTimer); handleAction(); return; }
+                  if (code) { detectedCode = code.data; }
+                }
+                
+                if (detectedCode) {
+                    if (detectedCode === 'ABSENSI-SAE') {
+                        clearInterval(checkTimer); handleAction(); return;
+                    } else {
+                        setQrWarning(true);
+                        setTimeout(() => setQrWarning(false), 3500);
+                    }
                 }
               } catch (e) { }
             }
-          }, 150); 
+          }, 250); 
         }
         return () => clearInterval(checkTimer);
       }, [method, distance, result, attendanceType, isProcessing]);
@@ -1052,6 +1026,9 @@
         <div ref={topRef} className="max-w-2xl mx-auto space-y-4 animate-fade-in-up pt-2 pb-10">
           {outOfRadiusWarning && (
              <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;100m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
+          )}
+          {qrWarning && (
+             <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Barcode tidak valid! Pastikan memindai QR Code absensi resmi perusahaan (ABSENSI-SAE).</p></div>
           )}
 
           <div className="flex p-1.5 bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 rounded-[1.5rem] shadow-inner relative overflow-hidden h-[60px]">

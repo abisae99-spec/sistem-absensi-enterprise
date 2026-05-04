@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Sistem Absensi Profesional</title>
+  <title>Sistem Absensi Enterprise</title>
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -631,18 +631,57 @@
         else setIsSplashPhase(true);
       }, [isDataLoaded]);
 
-      useEffect(() => { 
-        const requestPermissions = async () => { try { if ("geolocation" in navigator) { navigator.geolocation.getCurrentPosition(() => {}, () => {}); } if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); stream.getTracks().forEach(track => track.stop()); } } catch (err) {} };
-        requestPermissions(); 
+      const requestPermissions = async () => {
+        let gpsOk = true; let camOk = true;
+        try {
+          if (!navigator.geolocation) {
+            gpsOk = false;
+          } else {
+            await new Promise((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 5000 });
+            });
+          }
+        } catch (err) {
+          gpsOk = false;
+        }
+
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            camOk = false;
+          } else {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+            stream.getTracks().forEach(track => track.stop());
+          }
+        } catch (err) {
+          camOk = false;
+        }
+
+        return { gpsOk, camOk };
+      };
+
+      useEffect(() => {
+        const initPermissions = async () => {
+          try {
+            await requestPermissions();
+          } catch (err) {
+            console.warn('Permission request failed', err);
+          }
+        };
+        initPermissions();
       }, []);
 
       const submitLogin = async (e) => {
         e.preventDefault(); setIsLoading(true); setError('');
         if (!username || !password) { setError('Lengkapi ID Karyawan dan Kata Sandi.'); setIsLoading(false); return; }
-        let gpsOk = true; let camOk = true;
-        try { await new Promise((resolve, reject) => { if (!navigator.geolocation) reject(); else navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 2000}); }); } catch(err) { gpsOk = false; }
-        try { const stream = await navigator.mediaDevices.getUserMedia({video: true}); stream.getTracks().forEach(t=>t.stop()); } catch(err) { camOk = false; }
-        if ((!gpsOk || !camOk) && !bypassAllowed) { setError('Akses Lokasi atau Kamera belum diizinkan. Izinkan di browser, atau klik TETAP MASUK.'); setBypassAllowed(true); setIsLoading(false); return; }
+
+        const { gpsOk, camOk } = await requestPermissions();
+        if ((!gpsOk || !camOk) && !bypassAllowed) {
+          setError('Akses Lokasi dan Kamera harus diizinkan untuk Scan QR. Periksa izin browser, lalu klik TETAP MASUK jika ingin melanjutkan.');
+          setBypassAllowed(true);
+          setIsLoading(false);
+          return;
+        }
+
         try { await onLogin({ username, password }); } catch (err) { setError(err.message); } finally { setIsLoading(false); }
       };
 
@@ -660,7 +699,7 @@
             </div>
             <h1 className="flex flex-col items-center justify-center text-center gap-1">
                 <span className="text-2xl md:text-3xl font-black tracking-widest text-[#0070BA] dark:text-[#00F0FF] uppercase drop-shadow-[0_0_10px_rgba(0,112,186,0.2)]">SISTEM ABSENSI</span>
-                <span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '3rem', letterSpacing: 'normal', lineHeight: '0.8' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Profesional</span>
+                <span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '3rem', letterSpacing: 'normal', lineHeight: '0.8' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Enterprise</span>
             </h1>
             <div className="mt-8 flex flex-col items-center"><Loader2 size={24} className="text-[#0070BA] dark:text-[#00F0FF] animate-spin opacity-70 mb-2" /><span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">LOADING...</span></div>
           </div>
@@ -670,7 +709,7 @@
                 <div className="relative w-[134px] h-[134px] md:w-[153px] md:h-[153px] mx-auto mb-4 flex items-center justify-center">{uiSettings.logo ? <img src={uiSettings.logo} alt="Logo" className="w-full h-full object-contain drop-shadow-xl" /> : <SaeLogo textScale={1.4} />}</div>
                 <h1 className="flex flex-row items-center justify-center leading-none text-center flex-wrap">
                     <span className="text-base sm:text-lg md:text-xl font-black tracking-widest text-[#0070BA] dark:text-[#00F0FF] uppercase drop-shadow-[0_0_10px_rgba(0,112,186,0.2)] mt-2">SISTEM ABSENSI</span>
-                    <span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '2.6em', letterSpacing: 'normal', marginLeft: '8px', marginTop: '0.15rem' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Profesional</span>
+                    <span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '2.6em', letterSpacing: 'normal', marginLeft: '8px', marginTop: '0.15rem' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Enterprise</span>
                 </h1>
                 <h2 className="text-[9px] md:text-xs font-bold text-gray-500 dark:text-gray-400 tracking-[0.3em] uppercase mt-2 text-center">{uiSettings?.companyName}</h2>
             </div>
@@ -683,7 +722,7 @@
               </form>
             </GlassCard>
           </div>
-          <div className={`absolute bottom-4 left-0 right-0 text-center z-10 transition-opacity duration-1000 ${!isSplashPhase ? 'opacity-100' : 'opacity-0'}`}><p className="text-[8px] md:text-[10px] text-[#0070BA]/70 dark:text-gray-500 font-mono tracking-widest uppercase">copyright IAF2026 versi Profesional</p></div>
+          <div className={`absolute bottom-4 left-0 right-0 text-center z-10 transition-opacity duration-1000 ${!isSplashPhase ? 'opacity-100' : 'opacity-0'}`}><p className="text-[8px] md:text-[10px] text-[#0070BA]/70 dark:text-gray-500 font-mono tracking-widest uppercase">copyright IAF2026 versi Enterprise</p></div>
         </div>
       );
     }
@@ -719,7 +758,7 @@
           <aside className="hidden md:flex flex-col w-[260px] h-full rounded-[2rem] bg-white/60 dark:bg-[#0A1128]/90 backdrop-blur-3xl border border-[#0070BA]/20 shadow-xl z-20 shrink-0">
             <div className="px-6 py-8 border-b border-[#0070BA]/10 text-center">
                <div className="px-4 py-5 rounded-2xl border border-[#0070BA]/30 dark:border-[#00F0FF]/30 bg-white/40 dark:bg-[#0A1128]/60 shadow-[0_0_15px_rgba(0,240,255,0.1)] flex flex-col items-center justify-center">
-                 <div className="flex flex-col items-center justify-center leading-none mb-1 text-center"><span className="font-black text-[12px] md:text-[14px] text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest drop-shadow-sm">SISTEM ABSENSI</span><span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '2.2rem', letterSpacing: 'normal', marginTop: '-0.2rem' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Profesional</span></div>
+                 <div className="flex flex-col items-center justify-center leading-none mb-1 text-center"><span className="font-black text-[12px] md:text-[14px] text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest drop-shadow-sm">SISTEM ABSENSI</span><span style={{ fontFamily: '"Palace Script MT", cursive', textTransform: 'none', fontWeight: 'normal', fontSize: '2.2rem', letterSpacing: 'normal', marginTop: '-0.2rem' }} className="text-[#00A86B] dark:text-[#B026FF] drop-shadow-md">Enterprise</span></div>
                  <p className="text-[8px] font-bold text-gray-500 dark:text-gray-400 mt-2 uppercase tracking-widest leading-tight">{uiSettings?.companyName}</p>
                </div>
             </div>
@@ -941,26 +980,42 @@
               try {
                 let detectedCode = null;
                 if ('BarcodeDetector' in window) {
-                  const detector = new window.BarcodeDetector(); const barcodes = await detector.detect(videoRef.current);
-                  if (barcodes.length > 0) { detectedCode = barcodes[0].rawValue; }
-                } 
+                  const detector = new window.BarcodeDetector();
+                  const barcodes = await detector.detect(videoRef.current);
+                  if (barcodes.length > 0) {
+                    detectedCode = barcodes[0].rawValue || barcodes[0].rawData?.toString();
+                  }
+                }
+
                 if (!detectedCode && window.jsQR) {
-                  const canvas = document.createElement('canvas'); const context = canvas.getContext('2d', { willReadFrequently: true }); canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight; context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height); const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                  const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-                  if (code) { detectedCode = code.data; }
+                  const canvas = document.createElement('canvas');
+                  const context = canvas.getContext('2d', { willReadFrequently: true });
+                  canvas.width = videoRef.current.videoWidth;
+                  canvas.height = videoRef.current.videoHeight;
+                  context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                  const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+                  if (code && code.data) {
+                    detectedCode = code.data;
+                  }
                 }
-                
+
                 if (detectedCode) {
-                    if (detectedCode === 'ABSENSI-SAE') {
-                        clearInterval(checkTimer); handleAction(); return;
-                    } else {
-                        setQrWarning(true);
-                        setTimeout(() => setQrWarning(false), 3500);
-                    }
+                  const normalized = String(detectedCode).trim().toUpperCase();
+                  if (normalized === 'ABSENSI-SAE' || normalized.includes('ABSENSI-SAE')) {
+                    clearInterval(checkTimer);
+                    handleAction();
+                    return;
+                  }
+
+                  setQrWarning(true);
+                  setTimeout(() => setQrWarning(false), 3500);
                 }
-              } catch (e) { }
+              } catch (e) {
+                console.warn('QR scan error', e);
+              }
             }
-          }, 250); 
+          }, 250);
         }
         return () => clearInterval(checkTimer);
       }, [method, distance, result, attendanceType, isProcessing]);

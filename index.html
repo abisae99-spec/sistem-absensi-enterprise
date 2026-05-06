@@ -99,7 +99,7 @@
     // KONFIGURASI DATABASE LAT:-6.1522193,LNG:106.7916433
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.7916433 };
-    const RADIUS_TOLERANCE_METERS = 100;
+    const RADIUS_TOLERANCE_METERS = 50;
     const COLORS = { hadir: '#00F0FF', telat: '#FFB800', absen: '#FF003C', purple: '#B026FF', orange: '#FF5E00', lightPrimary: '#0070BA' };
 
     // --- HELPER FUNCTIONS ---
@@ -128,24 +128,27 @@
     };
     const formatSheetTime = (val) => { if (!val) return ''; let strVal = String(val); if (strVal.includes('T')) { const timePart = strVal.split('T')[1]; if (timePart) return timePart.substring(0, 5); } return strVal; };
 
-    const getAttendanceStatus = (time, type, shiftStr = '08:00 - 17:00') => {
-      const totalMins = time.getHours() * 60 + time.getMinutes();
+    const getAttendanceStatus = (time, type, shiftStr = '08:00 - 17:00', policy = { maxCheckInEarly: 240, minCheckOutEarly: 299, lemburStart: 90 }, isApproved = false) => {
       const [sIn, sOut] = shiftStr.split('-').map(t => t.trim());
       const toMins = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+      const totalMins = time.getHours() * 60 + time.getMinutes();
+      const sInM = toMins(sIn); const sOutM = toMins(sOut);
       
       if (type === 'IN') {
-        const sInM = toMins(sIn);
         const diff = totalMins - sInM;
-        if (diff <= 0) return { status: 'Sangat Hadir', color: 'text-emerald-600 dark:text-emerald-400' };
-        if (diff > 0 && diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
-        return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
+        if (diff < -policy.maxCheckInEarly) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
+        if (diff <= 10) return { status: 'Normal', color: 'text-emerald-600 dark:text-emerald-400' };
+        if (diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
+        if (diff > 120 && diff <= 240) return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
+        return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
       } else {
-        const sOutM = toMins(sOut);
-        const diffOut = sOutM - totalMins;
-        if (diffOut > 0 && diffOut <= 300) return { status: 'Pulang Awal', color: 'text-amber-500 dark:text-amber-400' }; // Maksimal 5 Jam (300 Menit)
-        if (diffOut > 300) return { status: 'Absen', color: 'text-rose-600 dark:text-rose-500' }; // Lebih awal dari 5 Jam dianggap Absen/Tidak Valid
-        if (totalMins <= sOutM + 90) return { status: 'Normal', color: 'text-[#0070BA] dark:text-cyan-400' };
-        return { status: 'Lembur', color: 'text-purple-600 dark:text-fuchsia-400' };
+        const early = sOutM - totalMins;
+        const overtime = totalMins - sOutM;
+        if (totalMins < sOutM - policy.minCheckOutEarly) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500', notification: 'Diluar Batas' };
+        if (early >= 121 && early <= 299) return { status: 'Plg Awal', color: 'text-amber-500 dark:text-amber-400', notification: 'Awal' };
+        if (early >= 1 && early < 121) return { status: 'Plg Cepat', color: 'text-amber-500 dark:text-amber-400', notification: 'Cepat' };
+        if (overtime < policy.lemburStart) return { status: 'Plg Normal', color: 'text-[#0070BA] dark:text-cyan-400', notification: 'Normal' };
+        return { status: isApproved ? 'Lembur' : 'Normal', color: isApproved ? 'text-purple-600 dark:text-fuchsia-400' : 'text-[#0070BA] dark:text-cyan-400', notification: isApproved ? 'Lembur' : 'Normal' };
       }
     };
 
@@ -209,6 +212,26 @@
       }
 
       return { kerja: kerjaStr, telat: telatStr, awal: awalStr, lembur: lemburStr, telatMins: telatM, lemburMins: lemburM };
+    };
+
+    const getStatusClass = (status) => {
+      if (!status || status === '-' || status === 'Normal' && status !== 'Diluar Batas') return 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30';
+      const lower = String(status).toLowerCase();
+      if (lower.includes('sangat telat') || lower.includes('diluar batas')) return 'text-rose-600 bg-rose-100 border-rose-300';
+      if (lower.includes('telat') || lower.includes('plg awal') || lower.includes('awal') || lower.includes('plg cepat') || lower.includes('cepat')) return 'text-amber-600 bg-amber-100 border-amber-300';
+      if (lower.includes('lembur')) return 'text-purple-600 bg-purple-100 border-purple-300';
+      if (lower.includes('sakit') || lower.includes('cuti') || lower.includes('izin') || lower.includes('absen')) return 'text-purple-600 bg-purple-100 border-purple-300';
+      return 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30';
+    };
+
+    const determineStatusInOut = (checkIn, checkOut, type) => {
+      if (type === 'IN') {
+        if (!checkIn || checkIn === '-' || String(checkIn).trim() === '') return 'Sangat Telat';
+        return null;
+      } else {
+        if (!checkOut || checkOut === '-' || String(checkOut).trim() === '') return 'Plg Awal';
+        return null;
+      }
     };
 
     const getDisplayKeterangan = (row, globalRequests) => {
@@ -336,6 +359,7 @@
       const [globalDepartemen, setGlobalDepartemen] = useState([{ id: 'D01', nama: 'IT' }]);
       const [globalJadwal, setGlobalJadwal] = useState([{ id: 1, dept: 'Semua Departemen', hari: 'Senin - Jumat', in: '08:00', out: '17:00' }]);
       const [globalUangMakan, setGlobalUangMakan] = useState({ toleransi: 10, potTelat: 50, potAbsen: '(Gaji Pokok / 30 Hari) * Jml Absen', hangus: 15, keterangan: 'Check-in > toleransi dipotong %. Check-in > hangus atau status Sakit/Absen/Cuti = 0.' });
+      const [globalAttendancePolicy, setGlobalAttendancePolicy] = useState({ maxCheckInEarly: 240, minCheckOutEarly: 299, lemburStart: 90 });
       const [globalLembur, setGlobalLembur] = useState([{ id: 1, rule: 'Mulai Hitung', formula: '90 Menit Pasca Pulang' }]);
       const [globalLibur, setGlobalLibur] = useState([{ id: 1, date: '2026-08-17', desc: 'Hari Kemerdekaan RI' }]);
       const [globalKebijakanCuti, setGlobalKebijakanCuti] = useState({ tglMulai: '2024-12-21', tglSelesai: '2026-03-31', prorata: true, minus: true });
@@ -356,6 +380,7 @@
                 if (d.setting.uiSettings) setUiSettings(d.setting.uiSettings);
                 if (d.setting.payrollLabels) setPayrollLabels(d.setting.payrollLabels);
                 if (d.setting.globalUangMakan && !Array.isArray(d.setting.globalUangMakan)) setGlobalUangMakan(d.setting.globalUangMakan);
+                if (d.setting.globalAttendancePolicy) setGlobalAttendancePolicy(d.setting.globalAttendancePolicy);
                 if (d.setting.globalKebijakanCuti) setGlobalKebijakanCuti(d.setting.globalKebijakanCuti);
               }
 
@@ -466,7 +491,7 @@
                     return { 
                        ...a, date: validDateStr, displayDate: displayStr, day: dayName,
                        time: `${rIn} - ${rOut}`, checkIn: rIn, checkOut: rOut, shift: shiftVal, shiftClass: 'text-[#0070BA]', 
-                       timeClass: 'text-gray-600', statusClass: sClass, note: a.keterangan || a.note || '', noteClass: 'text-gray-400',
+                       timeClass: 'text-gray-600', statusClass: sClass, statusIn: (rIn === '-' ? 'Sangat Telat' : a.status) || '-', statusOut: (rOut === '-' ? 'Plg Awal' : a.status) || '-', statusClassIn: (rIn === '-' ? getStatusClass('Sangat Telat') : sClass), statusClassOut: (rOut === '-' ? getStatusClass('Plg Awal') : sClass), note: a.keterangan || a.note || '', noteClass: 'text-gray-400',
                        uangMakan: uangMakanDiterima, uangLembur: uangLemburVal, ...times, lembur: lemburDis
                     };
                  });
@@ -520,7 +545,7 @@
                      else if (lemburHours > 1) lemburVal = (hourlyRate * 1.5) + ((lemburHours - 1) * hourlyRate * 2);
                  }
 
-                 const record = { id: req.id, nama: req.nama, date: dateStr, displayDate: formatIndoDate(dateStr), day: currentDate.toLocaleDateString('id-ID', {weekday: 'long'}), shift: '08:00 - 17:00', shiftClass: 'text-gray-400', checkIn: rIn, checkOut: rOut, time: tTime, timeClass: 'text-gray-400', loc: status === 'IZIN' || status === 'SAKIT' || status === 'CUTI' ? '-' : 'Kantor Pusat', status: status, statusClass: statusClass, note: req.jenis + ' (Disetujui)', noteClass: 'text-[#0070BA]', hours: hours, foto: '', uangMakan: 0, uangLembur: lemburVal, ...times };
+                 const record = { id: req.id, nama: req.nama, date: dateStr, displayDate: formatIndoDate(dateStr), day: currentDate.toLocaleDateString('id-ID', {weekday: 'long'}), shift: '08:00 - 17:00', shiftClass: 'text-gray-400', checkIn: rIn, checkOut: rOut, time: tTime, timeClass: 'text-gray-400', loc: status === 'IZIN' || status === 'SAKIT' || status === 'CUTI' ? '-' : 'Kantor Pusat', status: status, statusIn: status, statusOut: status, statusClass: statusClass, statusClassIn: statusClass, statusClassOut: statusClass, note: req.jenis + ' (Disetujui)', noteClass: 'text-[#0070BA]', hours: hours, foto: '', uangMakan: 0, uangLembur: lemburVal, ...times };
                  if(existingIdx > -1) newAttendance[existingIdx] = record; else newAttendance.push(record);
                  currentDate.setDate(currentDate.getDate() + 1);
               }
@@ -566,16 +591,10 @@
             {currentScreen === 'login' ? <LoginScreen onLogin={handleLogin} uiSettings={uiSettings} isDataLoaded={isDataLoaded} /> : (
               <AppLayout user={user} role={role} currentScreen={currentScreen} setCurrentScreen={setCurrentScreen} isDarkMode={isDarkMode} toggleTheme={() => setIsDarkMode(!isDarkMode)} onLogout={handleLogout} activeSettingTab={activeSettingTab} setActiveSettingTab={setActiveSettingTab} activeReportTab={activeReportTab} setActiveReportTab={setActiveReportTab} uiSettings={uiSettings}>
                 {currentScreen === 'dashboard' && <DashboardScreen user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
-                {currentScreen === 'attendance' && <AttendanceScreen user={user} onBack={() => setCurrentScreen('dashboard')} onRecordAbsen={(newAbsenPayload) => {
+                {currentScreen === 'attendance' && <AttendanceScreen user={user} attendancePolicy={globalAttendancePolicy} onBack={() => setCurrentScreen('dashboard')} onRecordAbsen={(newAbsenPayload) => {
                   const updatedAttendance = [...globalAttendance];
                   const existingIdx = updatedAttendance.findIndex(a => a.id === newAbsenPayload.id && a.date === newAbsenPayload.date);
-                  let sClass = 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30';
-                  if (newAbsenPayload.status.includes('TELAT') || newAbsenPayload.status === 'PULANG AWAL') sClass = 'text-amber-600 bg-amber-100 border-amber-300';
-                  if (newAbsenPayload.status === 'ABSEN' || newAbsenPayload.status === 'SANGAT TELAT') sClass = 'text-rose-600 bg-rose-100 border-rose-300';
-                  if (newAbsenPayload.status === 'SANGAT HADIR') sClass = 'text-emerald-600 bg-emerald-100 border-emerald-300';
-                  
                   const times = calculateTimes(newAbsenPayload.shift, newAbsenPayload.checkIn, newAbsenPayload.checkOut);
-                  
                   const empInfo = globalEmployees.find(e => e.id === newAbsenPayload.id) || {};
                   let uangMakanHarian = Number(empInfo.tMakan) || 0;
                   let uangMakanDiterima = uangMakanHarian;
@@ -584,50 +603,56 @@
                   const bHangus = Number(globalUangMakan.hangus) || 15;
                   const bPotTelat = Number(globalUangMakan.potTelat) || 50;
 
-                  if (lowerStatus.includes('sakit') || lowerStatus.includes('izin') || lowerStatus.includes('cuti') || lowerStatus.includes('absen') || lowerStatus.includes('alfa') || !newAbsenPayload.checkIn || newAbsenPayload.checkIn === '-') { 
-                      uangMakanDiterima = 0; 
-                  } else if (times.telatMins > bHangus) { 
-                      uangMakanDiterima = 0; 
-                  } else if (times.telatMins > bToleransi) { 
-                      uangMakanDiterima = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100)); 
+                  if (lowerStatus.includes('sakit') || lowerStatus.includes('izin') || lowerStatus.includes('cuti') || lowerStatus.includes('absen') || lowerStatus.includes('alfa') || !newAbsenPayload.checkIn || newAbsenPayload.checkIn === '-') {
+                      uangMakanDiterima = 0;
+                  } else if (times.telatMins > bHangus) {
+                      uangMakanDiterima = 0;
+                  } else if (times.telatMins > bToleransi) {
+                      uangMakanDiterima = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100));
                   }
 
-                  if (newAbsenPayload.type === 'IN') { 
-                      if(existingIdx === -1) { 
-                          updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `${cleanTimeStr(newAbsenPayload.checkIn)} - -`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', statusClass: sClass, note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: uangMakanDiterima, ...times }); 
+                  const statusClassIn = getStatusClass(newAbsenPayload.type === 'IN' ? newAbsenPayload.status : existingIdx > -1 ? updatedAttendance[existingIdx].statusIn : '-');
+                  const statusClassOut = getStatusClass(newAbsenPayload.type === 'OUT' ? newAbsenPayload.status : existingIdx > -1 ? updatedAttendance[existingIdx].statusOut : '-');
+
+                  if (newAbsenPayload.type === 'IN') {
+                      if (existingIdx === -1) {
+                          const finalStatusIn = newAbsenPayload.checkIn && newAbsenPayload.checkIn !== '-' ? newAbsenPayload.status : 'Sangat Telat';
+                          updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `${cleanTimeStr(newAbsenPayload.checkIn)} - -`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', status: finalStatusIn, statusIn: finalStatusIn, statusOut: '-', statusClass: getStatusClass(finalStatusIn), statusClassIn: getStatusClass(finalStatusIn), statusClassOut: 'text-gray-400 bg-gray-100 border-gray-200', note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: uangMakanDiterima, ...times });
                       }
                   } else {
-                     if(existingIdx > -1) { 
-                         updatedAttendance[existingIdx].checkOut = newAbsenPayload.checkOut; 
-                         updatedAttendance[existingIdx].time = `${cleanTimeStr(updatedAttendance[existingIdx].checkIn)} - ${cleanTimeStr(newAbsenPayload.checkOut)}`; 
-                         updatedAttendance[existingIdx].status = newAbsenPayload.status; 
-                         updatedAttendance[existingIdx].statusClass = sClass; 
-                         updatedAttendance[existingIdx].note = updatedAttendance[existingIdx].note !== newAbsenPayload.keterangan ? updatedAttendance[existingIdx].note + " & " + newAbsenPayload.keterangan : newAbsenPayload.keterangan; 
+                     if (existingIdx > -1) {
+                         const finalStatusOut = newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' ? newAbsenPayload.status : 'Plg Awal';
+                         updatedAttendance[existingIdx].checkOut = newAbsenPayload.checkOut;
+                         updatedAttendance[existingIdx].time = `${cleanTimeStr(updatedAttendance[existingIdx].checkIn)} - ${cleanTimeStr(newAbsenPayload.checkOut)}`;
+                         updatedAttendance[existingIdx].statusOut = finalStatusOut;
+                         updatedAttendance[existingIdx].statusClassOut = getStatusClass(finalStatusOut);
+                         updatedAttendance[existingIdx].status = updatedAttendance[existingIdx].statusIn || finalStatusOut;
+                         updatedAttendance[existingIdx].note = updatedAttendance[existingIdx].note !== newAbsenPayload.keterangan ? updatedAttendance[existingIdx].note + " & " + newAbsenPayload.keterangan : newAbsenPayload.keterangan;
                          
                          const newTimes = calculateTimes(newAbsenPayload.shift, updatedAttendance[existingIdx].checkIn, newAbsenPayload.checkOut);
                          
                          let finalUangMakan = uangMakanHarian;
-                         const finalStatus = (newAbsenPayload.status || '').toLowerCase();
-                         if (finalStatus.includes('sakit') || finalStatus.includes('izin') || finalStatus.includes('cuti') || finalStatus.includes('absen') || finalStatus.includes('alfa') || !updatedAttendance[existingIdx].checkIn || updatedAttendance[existingIdx].checkIn === '-') { 
-                             finalUangMakan = 0; 
-                         } else if (newTimes.telatMins > bHangus) { 
-                             finalUangMakan = 0; 
-                         } else if (newTimes.telatMins > bToleransi) { 
-                             finalUangMakan = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100)); 
+                         const finalStatus = (finalStatusOut || '').toLowerCase();
+                         if (finalStatus.includes('sakit') || finalStatus.includes('izin') || finalStatus.includes('cuti') || finalStatus.includes('absen') || finalStatus.includes('alfa') || finalStatus.includes('plg awal') || !updatedAttendance[existingIdx].checkIn || updatedAttendance[existingIdx].checkIn === '-') {
+                             finalUangMakan = 0;
+                         } else if (newTimes.telatMins > bHangus) {
+                             finalUangMakan = 0;
+                         } else if (newTimes.telatMins > bToleransi) {
+                             finalUangMakan = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100));
                          }
                          
                          updatedAttendance[existingIdx].uangMakan = finalUangMakan;
-                         Object.assign(updatedAttendance[existingIdx], newTimes); 
-                     } 
-                     else { 
-                         updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `- - ${cleanTimeStr(newAbsenPayload.checkOut)}`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', statusClass: sClass, note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: 0, ...times }); 
+                         Object.assign(updatedAttendance[existingIdx], newTimes);
+                     } else {
+                         const finalStatusOut = newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' ? newAbsenPayload.status : 'Plg Awal';
+                         updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `- - ${cleanTimeStr(newAbsenPayload.checkOut)}`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', status: finalStatusOut, statusIn: '-', statusOut: finalStatusOut, statusClass: getStatusClass(finalStatusOut), statusClassIn: 'text-gray-400 bg-gray-100 border-gray-200', statusClassOut: getStatusClass(finalStatusOut), note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: 0, ...times });
                      }
                   }
                   setGlobalAttendance(updatedAttendance); sendDataToSheet({ action: 'RECORD_ABSEN', data: newAbsenPayload });
                 }} />}
                 {currentScreen === 'leave' && <LeaveFormScreen user={user} onSubmitLeave={(newReq) => { setGlobalRequests([...globalRequests, newReq]); sendDataToSheet({ action: 'RECORD_PENGAJUAN', data: newReq }); }} />}
                 {currentScreen === 'reports' && <ReportsScreen role={role} user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} uiSettings={uiSettings} payrollLabels={payrollLabels} activeTab={activeReportTab} setActiveTab={setActiveReportTab} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
-                {currentScreen === 'settings' && <SettingsScreen role={role} activeTab={activeSettingTab} setActiveTab={setActiveSettingTab} globalRequests={globalRequests} setGlobalRequests={setGlobalRequests} onApprovalDecision={handleApprovalDecision} onDeleteRequest={handleDeleteRequest} onUpdateReq={handleUpdateReq} uiSettings={uiSettings} setUiSettings={setUiSettings} globalEmployees={globalEmployees} setGlobalEmployees={setGlobalEmployees} globalJabatan={globalJabatan} setGlobalJabatan={setGlobalJabatan} globalDepartemen={globalDepartemen} setGlobalDepartemen={setGlobalDepartemen} payrollLabels={payrollLabels} setPayrollLabels={setPayrollLabels} globalJadwal={globalJadwal} setGlobalJadwal={setGlobalJadwal} globalUangMakan={globalUangMakan} setGlobalUangMakan={setGlobalUangMakan} globalLembur={globalLembur} setGlobalLembur={setGlobalLembur} globalLibur={globalLibur} setGlobalLibur={setGlobalLibur} globalKebijakanCuti={globalKebijakanCuti} setGlobalKebijakanCuti={setGlobalKebijakanCuti} globalCutiBersama={globalCutiBersama} setGlobalCutiBersama={setGlobalCutiBersama} globalMatrixData={globalMatrixData} setGlobalMatrixData={setGlobalMatrixData} globalPassData={globalPassData} setGlobalPassData={setGlobalPassData} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
+                {currentScreen === 'settings' && <SettingsScreen role={role} activeTab={activeSettingTab} setActiveTab={setActiveSettingTab} globalRequests={globalRequests} setGlobalRequests={setGlobalRequests} onApprovalDecision={handleApprovalDecision} onDeleteRequest={handleDeleteRequest} onUpdateReq={handleUpdateReq} uiSettings={uiSettings} setUiSettings={setUiSettings} globalEmployees={globalEmployees} setGlobalEmployees={setGlobalEmployees} globalJabatan={globalJabatan} setGlobalJabatan={setGlobalJabatan} globalDepartemen={globalDepartemen} setGlobalDepartemen={setGlobalDepartemen} payrollLabels={payrollLabels} setPayrollLabels={setPayrollLabels} globalJadwal={globalJadwal} setGlobalJadwal={setGlobalJadwal} globalUangMakan={globalUangMakan} setGlobalUangMakan={setGlobalUangMakan} globalAttendancePolicy={globalAttendancePolicy} setGlobalAttendancePolicy={setGlobalAttendancePolicy} globalLembur={globalLembur} setGlobalLembur={setGlobalLembur} globalLibur={globalLibur} setGlobalLibur={setGlobalLibur} globalKebijakanCuti={globalKebijakanCuti} setGlobalKebijakanCuti={setGlobalKebijakanCuti} globalCutiBersama={globalCutiBersama} setGlobalCutiBersama={setGlobalCutiBersama} globalMatrixData={globalMatrixData} setGlobalMatrixData={setGlobalMatrixData} globalPassData={globalPassData} setGlobalPassData={setGlobalPassData} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
               </AppLayout>
             )}
           </div>
@@ -858,7 +883,7 @@
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3 border-b border-[#0070BA]/10 dark:border-white/10 pb-3"><h3 className="text-[10px] md:text-xs font-black tracking-widest uppercase text-[#134E4A] dark:text-white flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#0070BA] dark:bg-[#00F0FF]"></div> Ringkasan Absensi</h3></div>
             <div className="overflow-x-auto w-full rounded-xl border border-[#0070BA]/10 dark:border-white/5 custom-scrollbar">
               <table className="w-full text-left border-collapse whitespace-nowrap min-w-[800px]">
-                <thead><tr className="bg-white/40 dark:bg-[#0A1128] text-[9px] md:text-[10px] text-[#0070BA] dark:text-[#00F0FF] font-bold uppercase tracking-[0.15em]"><th className="p-3 md:p-4">Tanggal</th><th className="p-3 md:p-4">Hari</th><th className="p-3 md:p-4">Nama Karyawan</th><th className="p-3 md:p-4">Departemen</th><th className="p-3 md:p-4">Jabatan</th><th className="p-3 md:p-4">Jam Kerja</th><th className="p-3 md:p-4 text-center">In / Out</th><th className="p-3 md:p-4">Lokasi</th><th className="p-3 md:p-4 text-center">Status</th><th className="p-3 md:p-4 text-center">Foto</th><th className="p-3 md:p-4">Keterangan</th></tr></thead>
+                <thead><tr className="bg-white/40 dark:bg-[#0A1128] text-[9px] md:text-[10px] text-[#0070BA] dark:text-[#00F0FF] font-bold uppercase tracking-[0.15em]"><th className="p-3 md:p-4">Tanggal</th><th className="p-3 md:p-4">Hari</th><th className="p-3 md:p-4">Nama Karyawan</th><th className="p-3 md:p-4">Departemen</th><th className="p-3 md:p-4">Jabatan</th><th className="p-3 md:p-4">Jam Kerja</th><th className="p-3 md:p-4 text-center">In / Out</th><th className="p-3 md:p-4">Lokasi</th><th className="p-3 md:p-4 text-center">Status In</th><th className="p-3 md:p-4 text-center">Status Out</th><th className="p-3 md:p-4 text-center">Foto</th><th className="p-3 md:p-4">Keterangan</th></tr></thead>
                 <tbody className="font-bold text-[#134E4A] dark:text-white">
                   {filteredData.length > 0 ? (
                      filteredData.map((row, i) => {
@@ -873,7 +898,8 @@
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono font-bold ${row.shiftClass} align-middle`}>{row.shift}</td>
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono text-center ${row.timeClass} align-middle`}>{cleanTimeStr(row.checkIn)} / {cleanTimeStr(row.checkOut)}</td>
                         <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.loc}</td>
-                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClass}`}>{row.status}</span></td>
+                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn || row.statusClass || getStatusClass(row.statusIn || row.status)}`}>{row.statusIn || row.status || '-'}</span></td>
+                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut || row.statusClass || getStatusClass(row.statusOut || row.status)}`}>{row.statusOut || row.status || '-'}</span></td>
                         <td className="p-3 md:p-4 text-center align-middle">
                            <div className="flex justify-center w-full">
                               {row.foto ? <button onClick={(e)=>{ e.stopPropagation(); setGlobalPreviewPhoto(row.foto); }} className="text-[#0070BA] dark:text-[#00F0FF] hover:scale-110 transition-transform"><Camera size={16}/></button> : <span className="text-gray-400">-</span>}
@@ -882,7 +908,7 @@
                         <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 font-bold truncate max-w-[250px] align-middle">{getDisplayKeterangan(row, globalRequests)}</td>
                       </tr>
                     )})
-                  ) : ( <tr><td colSpan="11" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr> )}
+                  ) : ( <tr><td colSpan="12" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr> )}
                 </tbody>
               </table>
             </div>
@@ -891,13 +917,14 @@
       );
     }
 
-    function AttendanceScreen({ user, onBack, onRecordAbsen }) {
+    function AttendanceScreen({ user, attendancePolicy, onBack, onRecordAbsen }) {
       const [attendanceType, setAttendanceType] = useState('IN'); const [method, setMethod] = useState('barcode');
       const [locationName, setLocationName] = useState('Melacak posisi GPS...'); const [distance, setDistance] = useState(0);
       const [currentCoord, setCurrentCoord] = useState({ lat: 0, lng: 0 });
       const [isProcessing, setIsProcessing] = useState(false); const [result, setResult] = useState(null); const [capturedPhoto, setCapturedPhoto] = useState(null);
       const [outOfRadiusWarning, setOutOfRadiusWarning] = useState(false);
       const [qrWarning, setQrWarning] = useState(false);
+      const [qrVerified, setQrVerified] = useState(false);
       const videoRef = useRef(null); const topRef = useRef(null); const [currentTime, setCurrentTime] = useState(new Date());
 
       useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
@@ -963,8 +990,14 @@
                 }
                 
                 if (detectedCode) {
-                    if (detectedCode === 'ABSENSI-SAE') {
-                        clearInterval(checkTimer); handleAction(); return;
+                    if (detectedCode.includes(`LAT:${OFFICE_COORD.lat}`) && detectedCode.includes(`LNG:${OFFICE_COORD.lng}`)) {
+                        clearInterval(checkTimer);
+                        setQrVerified(true);
+                        setMethod('selfie');
+                        setCapturedPhoto(null);
+                        setQrWarning(false);
+                        setTimeout(() => setQrVerified(false), 8000);
+                        return;
                     } else {
                         setQrWarning(true);
                         setTimeout(() => setQrWarning(false), 3500);
@@ -1012,11 +1045,13 @@
       };
       
       const handleAction = async () => { 
-         setIsProcessing(true); const now = new Date(); const shiftVal = '08:00 - 17:00'; const statusObj = getAttendanceStatus(now, attendanceType, shiftVal); 
-         const locName = method === 'barcode' ? "Kantor" : distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName; 
-         const newAbsenPayload = { type: attendanceType, id: user?.id || 'EMP01', nama: user?.name || 'User', date: now.toISOString().split('T')[0], displayDate: formatIndoDate(now.toISOString().split('T')[0]), day: now.toLocaleDateString('id-ID', {weekday: 'long'}), shift: shiftVal, checkIn: attendanceType === 'IN' ? formatTime(now) : '', checkOut: attendanceType === 'OUT' ? formatTime(now) : '', loc: locName, lat: currentCoord.lat, lng: currentCoord.lng, status: statusObj.status.toUpperCase(), keterangan: method === 'selfie' ? 'Dinas Luar / Selfie' : 'Absensi Normal', hours: attendanceType === 'IN' ? 0 : 9, foto: capturedPhoto || '' };
+         setIsProcessing(true);
+         const now = new Date(); const shiftVal = '08:00 - 17:00'; const statusObj = getAttendanceStatus(now, attendanceType, shiftVal, attendancePolicy, false);
+         const locName = distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName;
+         const statusLabel = statusObj.notification || statusObj.status;
+         const newAbsenPayload = { type: attendanceType, id: user?.id || 'EMP01', nama: user?.name || 'User', date: now.toISOString().split('T')[0], displayDate: formatIndoDate(now.toISOString().split('T')[0]), day: now.toLocaleDateString('id-ID', {weekday: 'long'}), shift: shiftVal, checkIn: attendanceType === 'IN' ? formatTime(now) : '', checkOut: attendanceType === 'OUT' ? formatTime(now) : '', loc: locName, lat: currentCoord.lat, lng: currentCoord.lng, status: statusObj.status.toUpperCase(), statusIn: attendanceType === 'IN' ? statusObj.status : undefined, statusOut: attendanceType === 'OUT' ? statusObj.status : undefined, keterangan: method === 'selfie' ? 'Dinas Luar / Selfie' : 'Absensi Normal', hours: attendanceType === 'IN' ? 0 : 9, foto: capturedPhoto || '' };
          if (onRecordAbsen) onRecordAbsen(newAbsenPayload);
-         setResult({ success: true, time: formatTime(now), status: statusObj.status, locName: locName, color: statusObj.color.split(' ')[0] }); setIsProcessing(false); 
+         setResult({ success: statusObj.status !== 'Diluar Batas', time: formatTime(now), status: statusLabel, locName: locName, color: statusObj.color.split(' ')[0] }); setIsProcessing(false);
       };
 
       if (result) return (
@@ -1037,10 +1072,13 @@
       return (
         <div ref={topRef} className="max-w-2xl mx-auto space-y-4 animate-fade-in-up pt-2 pb-10">
           {outOfRadiusWarning && (
-             <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;100m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
+             <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;50m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
           )}
           {qrWarning && (
-             <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Barcode tidak valid! Pastikan memindai QR Code absensi resmi perusahaan (ABSENSI-SAE).</p></div>
+             <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Barcode tidak valid! Pastikan memindai QR Code absensi resmi perusahaan.</p></div>
+          )}
+          {qrVerified && (
+             <div className="bg-teal-100 dark:bg-[#00F0FF]/10 border border-teal-500 text-teal-700 dark:text-[#00F0FF] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md"><CheckCircle size={20} className="shrink-0" /><p>QR kantor terdeteksi. Silakan ambil foto selfie untuk menyelesaikan absensi.</p></div>
           )}
 
           <div className="flex p-1.5 bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 rounded-[1.5rem] shadow-inner relative overflow-hidden h-[60px]">
@@ -1200,16 +1238,20 @@
       const handleExportExcel = () => {
         let tableHTML = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table border="1">';
         if (activeTab === 'absensi') {
-            tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Lokasi</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Status</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
+            tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Lokasi</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
             filteredAbsensi.forEach(r => { 
                 const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(r.id).toUpperCase()) || {};
-                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.loc}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.status}</td><td>${getDisplayKeterangan(r, globalRequests)}</td></tr>`; 
+                const statusIn = r.statusIn || r.status || '-';
+                const statusOut = r.statusOut || r.status || '-';
+                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.loc}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${statusIn}</td><td>${statusOut}</td><td>${getDisplayKeterangan(r, globalRequests)}</td></tr>`; 
             });
         } else if (activeTab === 'uang') {
-            tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Uang Makan</th><th style="background-color:#0070BA; color:white;">Uang Lembur</th><th style="background-color:#0070BA; color:white;">Status</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
+            tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Uang Makan</th><th style="background-color:#0070BA; color:white;">Uang Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
             filteredAbsensi.forEach(r => { 
                 const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(r.id).toUpperCase()) || {};
-                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.uangMakan || 0}</td><td>${r.uangLembur || 0}</td><td>${r.status}</td><td>${getDisplayKeterangan(r, globalRequests)}</td></tr>`; 
+                const statusIn = r.statusIn || r.status || '-';
+                const statusOut = r.statusOut || r.status || '-';
+                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.uangMakan || 0}</td><td>${r.uangLembur || 0}</td><td>${statusIn}</td><td>${statusOut}</td><td>${getDisplayKeterangan(r, globalRequests)}</td></tr>`; 
             });
         } else if (activeTab === 'cuti') {
             tableHTML += '<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal Mulai</th><th style="background-color:#0070BA; color:white;">Tanggal Selesai</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jumlah Hari</th><th style="background-color:#0070BA; color:white;">Sisa Cuti</th><th style="background-color:#0070BA; color:white;">Keterangan</th><th style="background-color:#0070BA; color:white;">Approval</th></tr></thead><tbody>';
@@ -1329,7 +1371,8 @@
                         <th className="p-4 text-center text-amber-500">Pulang Awal</th><th className="p-4 text-center text-purple-500">Lembur</th>
                         {activeTab === 'uang' && <th className="p-4 text-right text-emerald-500">Uang Makan</th>}
                         {activeTab === 'uang' && <th className="p-4 text-right text-purple-500">Uang Lembur</th>}
-                        <th className="p-4 text-center">Status</th>
+                        <th className="p-4 text-center">Status In</th>
+                        <th className="p-4 text-center">Status Out</th>
                         {activeTab === 'absensi' && <th className="p-4 text-center">Foto</th>}
                         <th className="p-4">Keterangan</th>
                      </tr>
@@ -1355,7 +1398,8 @@
                               <td className="p-3 md:p-4 text-center text-purple-500 align-middle">{row.lembur}</td>
                               {activeTab === 'uang' && <td className="p-3 md:p-4 text-right font-mono text-emerald-600 dark:text-emerald-400 align-middle">{formatRupiah(row.uangMakan || 0)}</td>}
                               {activeTab === 'uang' && <td className="p-3 md:p-4 text-right font-mono text-purple-600 dark:text-purple-400 align-middle">{formatRupiah(row.uangLembur || 0)}</td>}
-                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClass}`}>{row.status}</span></td>
+                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn || row.statusClass || getStatusClass(row.statusIn || row.status)}`}>{row.statusIn || row.status || '-'}</span></td>
+                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut || row.statusClass || getStatusClass(row.statusOut || row.status)}`}>{row.statusOut || row.status || '-'}</span></td>
                               {activeTab === 'absensi' && <td className="p-3 md:p-4 text-center align-middle">
                                  <div className="flex justify-center w-full">
                                     {row.foto ? <button onClick={(e)=>{ e.stopPropagation(); setGlobalPreviewPhoto(row.foto); }} className="text-[#0070BA] dark:text-[#00F0FF] hover:scale-110 transition-transform"><Camera size={16}/></button> : <span className="text-gray-400">-</span>}
@@ -1467,15 +1511,15 @@
       );
     }
 
-    function SettingsScreen({ role, activeTab, setActiveTab, globalRequests, setGlobalRequests, onApprovalDecision, onDeleteRequest, onUpdateReq, uiSettings, setUiSettings, globalEmployees, setGlobalEmployees, globalJabatan, setGlobalJabatan, globalDepartemen, setGlobalDepartemen, payrollLabels, setPayrollLabels, globalJadwal, setGlobalJadwal, globalUangMakan, setGlobalUangMakan, globalLembur, setGlobalLembur, globalLibur, setGlobalLibur, globalKebijakanCuti, setGlobalKebijakanCuti, globalCutiBersama, setGlobalCutiBersama, globalMatrixData, setGlobalMatrixData, globalPassData, setGlobalPassData, setGlobalPreviewPhoto }) {
+    function SettingsScreen({ role, activeTab, setActiveTab, globalRequests, setGlobalRequests, onApprovalDecision, onDeleteRequest, onUpdateReq, uiSettings, setUiSettings, globalEmployees, setGlobalEmployees, globalJabatan, setGlobalJabatan, globalDepartemen, setGlobalDepartemen, payrollLabels, setPayrollLabels, globalJadwal, setGlobalJadwal, globalUangMakan, setGlobalUangMakan, globalAttendancePolicy, setGlobalAttendancePolicy, globalLembur, setGlobalLembur, globalLibur, setGlobalLibur, globalKebijakanCuti, setGlobalKebijakanCuti, globalCutiBersama, setGlobalCutiBersama, globalMatrixData, setGlobalMatrixData, globalPassData, setGlobalPassData, setGlobalPreviewPhoto }) {
       const allowedTabs = SETTINGS_TABS.filter(t => t.roles.includes(role));
       const [triggerSave, setTriggerSave] = useState(0);
       const saveStatus = useAutoSave(triggerSave);
       
       const dataRef = useRef();
       useEffect(() => {
-        dataRef.current = { globalEmployees, uiSettings, payrollLabels, globalJabatan, globalDepartemen, globalJadwal, globalUangMakan, globalLembur, globalLibur, globalKebijakanCuti, globalCutiBersama, globalMatrixData, globalPassData };
-      }, [globalEmployees, uiSettings, payrollLabels, globalJabatan, globalDepartemen, globalJadwal, globalUangMakan, globalLembur, globalLibur, globalKebijakanCuti, globalCutiBersama, globalMatrixData, globalPassData]);
+        dataRef.current = { globalEmployees, uiSettings, payrollLabels, globalJabatan, globalDepartemen, globalJadwal, globalUangMakan, globalAttendancePolicy, globalLembur, globalLibur, globalKebijakanCuti, globalCutiBersama, globalMatrixData, globalPassData };
+      }, [globalEmployees, uiSettings, payrollLabels, globalJabatan, globalDepartemen, globalJadwal, globalUangMakan, globalAttendancePolicy, globalLembur, globalLibur, globalKebijakanCuti, globalCutiBersama, globalMatrixData, globalPassData]);
 
       useEffect(() => {
          if (triggerSave === 0) return;
@@ -1484,7 +1528,7 @@
             const syncPayload = {
                 karyawan: cd.globalEmployees, jabatan: cd.globalJabatan, departemen: cd.globalDepartemen,
                 jamkerja: cd.globalJadwal, cutibersama: cd.globalCutiBersama, akses: cd.globalMatrixData,
-                login: cd.globalPassData, linas: cd.globalLibur, setting: { uiSettings: cd.uiSettings, payrollLabels: cd.payrollLabels, globalUangMakan: cd.globalUangMakan, globalLembur: cd.globalLembur, globalKebijakanCuti: cd.globalKebijakanCuti }
+                login: cd.globalPassData, linas: cd.globalLibur, setting: { uiSettings: cd.uiSettings, payrollLabels: cd.payrollLabels, globalUangMakan: cd.globalUangMakan, globalAttendancePolicy: cd.globalAttendancePolicy, globalLembur: cd.globalLembur, globalKebijakanCuti: cd.globalKebijakanCuti }
             };
             sendDataToSheet({ action: 'SYNC_ALL_SETTINGS', data: syncPayload });
          }, 1000); 
@@ -1529,7 +1573,7 @@
             {activeTab === 'approve' && <TabApprove simulateAutoSave={simulateAutoSave} role={role} globalRequests={globalRequests} setGlobalRequests={setGlobalRequests} onApprovalDecision={onApprovalDecision} onDeleteRequest={onDeleteRequest} onUpdateReq={onUpdateReq} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
             {activeTab === 'tampilan' && <TabTampilan simulateAutoSave={simulateAutoSave} uiSettings={uiSettings} setUiSettings={setUiSettings} />}
             {activeTab === 'master' && <TabMasterData simulateAutoSave={simulateAutoSave} globalEmployees={globalEmployees} setGlobalEmployees={setGlobalEmployees} globalJabatan={globalJabatan} setGlobalJabatan={setGlobalJabatan} globalDepartemen={globalDepartemen} setGlobalDepartemen={setGlobalDepartemen} payrollLabels={payrollLabels} setPayrollLabels={setPayrollLabels} />}
-            {activeTab === 'jamkerja' && <TabJamKerja simulateAutoSave={simulateAutoSave} globalJadwal={globalJadwal} setGlobalJadwal={setGlobalJadwal} globalUangMakan={globalUangMakan} setGlobalUangMakan={setGlobalUangMakan} globalLembur={globalLembur} setGlobalLembur={setGlobalLembur} globalLibur={globalLibur} setGlobalLibur={setGlobalLibur} />}
+            {activeTab === 'jamkerja' && <TabJamKerja simulateAutoSave={simulateAutoSave} globalJadwal={globalJadwal} setGlobalJadwal={setGlobalJadwal} globalUangMakan={globalUangMakan} setGlobalUangMakan={setGlobalUangMakan} globalAttendancePolicy={globalAttendancePolicy} setGlobalAttendancePolicy={setGlobalAttendancePolicy} globalLembur={globalLembur} setGlobalLembur={setGlobalLembur} globalLibur={globalLibur} setGlobalLibur={setGlobalLibur} />}
             {activeTab === 'cuti' && <TabCuti simulateAutoSave={simulateAutoSave} globalKebijakanCuti={globalKebijakanCuti} setGlobalKebijakanCuti={setGlobalKebijakanCuti} globalCutiBersama={globalCutiBersama} setGlobalCutiBersama={setGlobalCutiBersama} globalEmployees={globalEmployees} setGlobalEmployees={setGlobalEmployees} />}
             {activeTab === 'akses' && <TabAkses simulateAutoSave={simulateAutoSave} matrixData={globalMatrixData} setMatrixData={setGlobalMatrixData} passData={globalPassData} setPassData={setGlobalPassData} />}
           </div>
@@ -1834,10 +1878,11 @@
       );
     }
 
-    function TabJamKerja({ simulateAutoSave, globalJadwal, setGlobalJadwal, globalUangMakan, setGlobalUangMakan, globalLembur, setGlobalLembur, globalLibur, setGlobalLibur }) {
+    function TabJamKerja({ simulateAutoSave, globalJadwal, setGlobalJadwal, globalUangMakan, setGlobalUangMakan, globalAttendancePolicy, setGlobalAttendancePolicy, globalLembur, setGlobalLembur, globalLibur, setGlobalLibur }) {
       const [subTab, setSubTab] = useState('jadwal'); 
       const [editJdwIdx, setEditJdwIdx] = useState(null); const [jdwForm, setJdwForm] = useState({ dept: '', hari: '', in: '', out: '' });
       const [uangMakanForm, setUangMakanForm] = useState({ toleransi: globalUangMakan.toleransi || 10, potTelat: globalUangMakan.potTelat || 50, potAbsen: globalUangMakan.potAbsen || '(Gaji Pokok / 30 Hari) * Jml Absen', hangus: globalUangMakan.hangus || 15, keterangan: globalUangMakan.keterangan || 'Check-in > toleransi dipotong %, Check-in > hangus atau status Sakit/Absen/Cuti = 0.' });
+      const [attendancePolicyForm, setAttendancePolicyForm] = useState({ maxCheckInEarly: globalAttendancePolicy.maxCheckInEarly || 240, minCheckOutEarly: globalAttendancePolicy.minCheckOutEarly || 299, lemburStart: globalAttendancePolicy.lemburStart || 90 });
       const [editLbrIdx, setEditLbrIdx] = useState(null); const [lbrForm, setLbrForm] = useState({ rule: '', formula: '' });
       const [editLibIdx, setEditLibIdx] = useState(null); const [libForm, setLibForm] = useState({ date: '', desc: '' });
 
@@ -1885,13 +1930,16 @@
             <GlassCard className="p-5 md:p-8 space-y-6">
                <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
                  <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan Uang Makan</h3>
-                 <Button variant="primary" className="py-2 px-4 h-auto" onClick={() => { setGlobalUangMakan(uangMakanForm); simulateAutoSave(); }} icon={Save}>Simpan Aturan</Button>
+                 <Button variant="primary" className="py-2 px-4 h-auto" onClick={() => { setGlobalUangMakan(uangMakanForm); setGlobalAttendancePolicy(attendancePolicyForm); simulateAutoSave(); }} icon={Save}>Simpan Aturan</Button>
                </div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/20 dark:bg-black/20 p-5 rounded-2xl border border-black/5">
                   <InputGroup label="Toleransi Terlambat (Menit)" type="number" value={uangMakanForm.toleransi} onChange={e=>setUangMakanForm({...uangMakanForm, toleransi: parseInt(e.target.value)||0})} />
                   <InputGroup label="Potongan Telat (%)" type="number" value={uangMakanForm.potTelat} onChange={e=>setUangMakanForm({...uangMakanForm, potTelat: parseInt(e.target.value)||0})} />
                   <InputGroup label="Formula Potongan Absen" type="text" value={uangMakanForm.potAbsen} onChange={e=>setUangMakanForm({...uangMakanForm, potAbsen: e.target.value})} />
                   <InputGroup label="Batas Waktu Hangus (Menit)" type="number" value={uangMakanForm.hangus} onChange={e=>setUangMakanForm({...uangMakanForm, hangus: parseInt(e.target.value)||0})} />
+                  <InputGroup label="Max Check-in Awal (Menit)" type="number" value={attendancePolicyForm.maxCheckInEarly} onChange={e=>setAttendancePolicyForm({...attendancePolicyForm, maxCheckInEarly: parseInt(e.target.value)||0})} />
+                  <InputGroup label="Min Check-out Awal (Menit)" type="number" value={attendancePolicyForm.minCheckOutEarly} onChange={e=>setAttendancePolicyForm({...attendancePolicyForm, minCheckOutEarly: parseInt(e.target.value)||0})} />
+                  <InputGroup label="Mulai Lembur (Menit)" type="number" value={attendancePolicyForm.lemburStart} onChange={e=>setAttendancePolicyForm({...attendancePolicyForm, lemburStart: parseInt(e.target.value)||0})} />
                   <div className="md:col-span-2">
                      <InputGroup label="Keterangan Aturan" type="text" value={uangMakanForm.keterangan} onChange={e=>setUangMakanForm({...uangMakanForm, keterangan: e.target.value})} />
                   </div>

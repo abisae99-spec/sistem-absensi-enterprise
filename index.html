@@ -94,6 +94,8 @@
       ToggleRight = FallbackIcon, FileDown = FallbackIcon, ImagePlus = CameraIconFallback, Loader2 = FallbackIcon 
     } = LucideLib;
 
+    const PencilIconToUse = LucideLib.Pencil || LucideLib.Edit3 || LucideLib.Edit || EditIconFallback;
+
     // KONFIGURASI DATABASE
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.789063 };
@@ -282,10 +284,20 @@
 
     const ActionButtons = ({ onEdit, onDelete, onSave, showSave = false }) => (
       <div className="flex gap-2">
-        {showSave && <button onClick={onSave} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Save size={14} /></button>}
-        {onEdit && <button onClick={onEdit} className="p-1.5 bg-amber-100 text-amber-600 rounded"><Edit size={14} /></button>}
-        {onDelete && <button onClick={onDelete} className="p-1.5 bg-rose-100 text-rose-600 rounded"><Trash2 size={14} /></button>}
+        {showSave && <button onClick={onSave} className="p-1.5 bg-teal-100 text-teal-600 rounded" title="Simpan"><Save size={14} /></button>}
+        {onEdit && <button onClick={onEdit} className="p-1.5 bg-amber-100 text-amber-600 rounded" title="Edit"><PencilIconToUse size={14} /></button>}
+        {onDelete && <button onClick={onDelete} className="p-1.5 bg-rose-100 text-rose-600 rounded" title="Hapus"><Trash2 size={14} /></button>}
       </div>
+    );
+
+    const MobileAdaptiveTab = ({ active, icon: Icon, label, onClick }) => (
+      <button onClick={onClick} className="flex flex-col items-center justify-start gap-1 transition-transform active:scale-95 group w-full">
+         <div className={`relative w-12 h-12 rounded-full flex items-center justify-center shadow-sm transition-all duration-300 overflow-hidden border ${active ? 'border-transparent scale-110 shadow-md' : 'border-black/5 dark:border-white/10 group-hover:scale-105'}`}>
+            <div className={`absolute inset-0 opacity-100 transition-colors ${active ? 'bg-gradient-to-br from-[#0070BA] to-[#00A86B] dark:from-[#00F0FF] dark:to-[#B026FF]' : 'bg-white dark:bg-[#111827] group-hover:bg-gray-50 dark:group-hover:bg-[#1f2937]'}`}></div>
+            <Icon size={20} className={`relative z-10 transition-colors ${active ? 'text-white' : 'text-[#0070BA] dark:text-[#00F0FF]'}`} />
+         </div>
+         <span className={`text-[8px] font-black uppercase tracking-widest text-center leading-tight px-0.5 mt-1 ${active ? 'text-[#0070BA] dark:text-[#00F0FF]' : 'text-gray-500 dark:text-gray-400'}`}>{label}</span>
+      </button>
     );
 
     const useAutoSave = (dataToWatch) => {
@@ -631,57 +643,18 @@
         else setIsSplashPhase(true);
       }, [isDataLoaded]);
 
-      const requestPermissions = async () => {
-        let gpsOk = true; let camOk = true;
-        try {
-          if (!navigator.geolocation) {
-            gpsOk = false;
-          } else {
-            await new Promise((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 5000 });
-            });
-          }
-        } catch (err) {
-          gpsOk = false;
-        }
-
-        try {
-          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            camOk = false;
-          } else {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-            stream.getTracks().forEach(track => track.stop());
-          }
-        } catch (err) {
-          camOk = false;
-        }
-
-        return { gpsOk, camOk };
-      };
-
-      useEffect(() => {
-        const initPermissions = async () => {
-          try {
-            await requestPermissions();
-          } catch (err) {
-            console.warn('Permission request failed', err);
-          }
-        };
-        initPermissions();
+      useEffect(() => { 
+        const requestPermissions = async () => { try { if ("geolocation" in navigator) { navigator.geolocation.getCurrentPosition(() => {}, () => {}); } if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); stream.getTracks().forEach(track => track.stop()); } } catch (err) {} };
+        requestPermissions(); 
       }, []);
 
       const submitLogin = async (e) => {
         e.preventDefault(); setIsLoading(true); setError('');
         if (!username || !password) { setError('Lengkapi ID Karyawan dan Kata Sandi.'); setIsLoading(false); return; }
-
-        const { gpsOk, camOk } = await requestPermissions();
-        if ((!gpsOk || !camOk) && !bypassAllowed) {
-          setError('Akses Lokasi dan Kamera harus diizinkan untuk Scan QR. Periksa izin browser, lalu klik TETAP MASUK jika ingin melanjutkan.');
-          setBypassAllowed(true);
-          setIsLoading(false);
-          return;
-        }
-
+        let gpsOk = true; let camOk = true;
+        try { await new Promise((resolve, reject) => { if (!navigator.geolocation) reject(); else navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 2000}); }); } catch(err) { gpsOk = false; }
+        try { const stream = await navigator.mediaDevices.getUserMedia({video: true}); stream.getTracks().forEach(t=>t.stop()); } catch(err) { camOk = false; }
+        if ((!gpsOk || !camOk) && !bypassAllowed) { setError('Akses Lokasi atau Kamera belum diizinkan. Izinkan di browser, atau klik TETAP MASUK.'); setBypassAllowed(true); setIsLoading(false); return; }
         try { await onLogin({ username, password }); } catch (err) { setError(err.message); } finally { setIsLoading(false); }
       };
 
@@ -849,7 +822,7 @@
                 <h2 className="text-[10px] md:text-xs font-bold text-white/80 tracking-widest uppercase mb-1">Selamat Datang,</h2>
                 <h1 className="text-base sm:text-lg md:text-3xl font-black uppercase tracking-tight line-clamp-2 md:line-clamp-1">{user?.name}</h1>
               </div>
-              <div className="flex flex-col items-center justify-center mx-auto bg-black/20 dark:bg-[#0A1128]/60 backdrop-blur-md px-4 py-3 md:px-8 md:py-6 rounded-[1.5rem] md:rounded-[2rem] border border-white/20 w-full max-w-[280px] md:w-auto md:min-w-[340px] shadow-inner shrink-0">
+              <div className="flex flex-col items-center justify-center mx-auto md:mx-0 bg-black/20 dark:bg-[#0A1128]/60 backdrop-blur-md px-4 py-3 md:px-8 md:py-6 rounded-[1.5rem] md:rounded-[2rem] border border-white/20 w-full max-w-[280px] md:w-auto md:min-w-[340px] shadow-inner shrink-0">
                  <div className="text-3xl md:text-5xl leading-none font-mono font-black text-white dark:text-[#00F0FF] whitespace-nowrap drop-shadow-md tracking-wider relative" style={{ left: '0.05em' }}>{formatTimeDots(time)}</div>
                  <div className="text-[8px] md:text-xs font-bold text-white/90 uppercase mt-2 md:mt-3 tracking-[0.2em] relative" style={{ left: '0.1em' }}>{formatLongDate(time)}</div>
               </div>
@@ -857,7 +830,7 @@
           </div>
           <div className="flex gap-2 w-full overflow-x-auto custom-scrollbar pb-2 md:grid md:grid-cols-4 md:gap-5">
             {dashStats.map((stat, i) => (
-              <GlassCard key={i} className="p-3 md:p-4 flex flex-col items-center justify-center text-center min-w-[80px] flex-1 shrink-0"><div className="p-2 md:p-3 rounded-lg md:rounded-xl bg-white/60 dark:bg-[#0A1128] border border-white/40 dark:border-white/5 shadow-sm mb-1.5 md:mb-3"><stat.ic className="w-5 h-5 md:w-[22px] md:h-[22px]" style={{ color: stat.c }} /></div><div className="flex items-baseline gap-0.5 md:gap-1"><h3 className="text-lg md:text-2xl font-black text-[#134E4A] dark:text-white">{stat.v}</h3><span className="hidden md:inline text-[10px] font-bold text-gray-500">{stat.u}</span></div><p className="text-[7px] md:text-[9px] font-bold text-[#0070BA] dark:text-gray-400 uppercase tracking-widest mt-0.5 md:mt-1 truncate w-full px-0.5">{stat.l}</p></GlassCard>
+              <GlassCard key={i} className="p-3 md:p-4 flex flex-col items-center justify-center text-center min-w-[80px] flex-1 shrink-0"><div className="p-2 md:p-3 rounded-lg md:rounded-xl bg-white/60 dark:bg-[#0A1128] border border-white/40 dark:border-white/5 shadow-sm mb-1.5 md:mb-3"><stat.ic className="w-5 h-5 md:w-[22px] md:h-[22px]" style={{ color: stat.c }} /></div><div className="flex items-baseline justify-center gap-0.5 md:gap-1 w-full"><h3 className="text-lg md:text-2xl font-black text-[#134E4A] dark:text-white leading-none text-center">{stat.v}</h3><span className="hidden md:inline text-[10px] font-bold text-gray-500">{stat.u}</span></div><p className="text-[7px] md:text-[9px] font-bold text-[#0070BA] dark:text-gray-400 uppercase tracking-widest mt-0.5 md:mt-1 truncate w-full px-0.5">{stat.l}</p></GlassCard>
             ))}
           </div>
           <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-white/50 dark:bg-[#0A1128]/80 p-3 md:p-5 rounded-[1.5rem] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 shadow-sm backdrop-blur-xl">
@@ -980,42 +953,26 @@
               try {
                 let detectedCode = null;
                 if ('BarcodeDetector' in window) {
-                  const detector = new window.BarcodeDetector();
-                  const barcodes = await detector.detect(videoRef.current);
-                  if (barcodes.length > 0) {
-                    detectedCode = barcodes[0].rawValue || barcodes[0].rawData?.toString();
-                  }
-                }
-
+                  const detector = new window.BarcodeDetector(); const barcodes = await detector.detect(videoRef.current);
+                  if (barcodes.length > 0) { detectedCode = barcodes[0].rawValue; }
+                } 
                 if (!detectedCode && window.jsQR) {
-                  const canvas = document.createElement('canvas');
-                  const context = canvas.getContext('2d', { willReadFrequently: true });
-                  canvas.width = videoRef.current.videoWidth;
-                  canvas.height = videoRef.current.videoHeight;
-                  context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-                  const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
-                  if (code && code.data) {
-                    detectedCode = code.data;
-                  }
+                  const canvas = document.createElement('canvas'); const context = canvas.getContext('2d', { willReadFrequently: true }); canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight; context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height); const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                  const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
+                  if (code) { detectedCode = code.data; }
                 }
-
+                
                 if (detectedCode) {
-                  const normalized = String(detectedCode).trim().toUpperCase();
-                  if (normalized === 'ABSENSI-SAE' || normalized.includes('ABSENSI-SAE')) {
-                    clearInterval(checkTimer);
-                    handleAction();
-                    return;
-                  }
-
-                  setQrWarning(true);
-                  setTimeout(() => setQrWarning(false), 3500);
+                    if (detectedCode === 'ABSENSI-SAE') {
+                        clearInterval(checkTimer); handleAction(); return;
+                    } else {
+                        setQrWarning(true);
+                        setTimeout(() => setQrWarning(false), 3500);
+                    }
                 }
-              } catch (e) {
-                console.warn('QR scan error', e);
-              }
+              } catch (e) { }
             }
-          }, 250);
+          }, 250); 
         }
         return () => clearInterval(checkTimer);
       }, [method, distance, result, attendanceType, isProcessing]);
@@ -1283,9 +1240,17 @@
 
       return (
         <div className="space-y-4 md:space-y-6 animate-fade-in-up pb-10">
-          <div className="md:hidden grid grid-cols-2 gap-2 bg-white/40 dark:bg-[#0A1128]/50 p-2 rounded-2xl border border-black/5">
+          {/* Tampilan Mobile: Adaptive Icon Grid */}
+          <div className="md:hidden grid grid-cols-4 gap-2 bg-indigo-50/60 dark:bg-[#0A1128]/80 p-4 rounded-[2rem] border border-indigo-200/50 dark:border-indigo-900/30 mb-2 shadow-inner">
+             {[ {id:'absensi', label:'Absensi', icon: CheckCircle}, {id:'uang', label:'Uang Mkn', icon: FileText}, {id:'cuti', label:'Cuti', icon: Calendar}, {id:'slip', label:'Slip Gaji', icon: Printer} ].map(t => (
+                <MobileAdaptiveTab key={t.id} active={activeTab === t.id} icon={t.icon} label={t.label} onClick={()=>setActiveTab(t.id)} />
+             ))}
+          </div>
+
+          {/* Tampilan Desktop */}
+          <div className="hidden md:flex bg-white/40 dark:bg-[#0A1128]/50 p-1.5 rounded-[1.5rem] h-[60px] max-w-3xl mx-auto border border-black/5 overflow-x-auto mask-edges custom-scrollbar">
              {[ {id:'absensi', label:'Absensi'}, {id:'uang', label:'Uang Makan'}, {id:'cuti', label:'Cuti'}, {id:'slip', label:'Slip Gaji'} ].map(t => (
-                <button key={t.id} onClick={()=>setActiveTab(t.id)} className={`flex items-center justify-center py-2.5 text-[10px] md:text-xs font-bold tracking-widest uppercase transition-all rounded-xl ${activeTab === t.id ? 'bg-gradient-to-r from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#B026FF] text-white shadow-md' : 'text-gray-500 hover:bg-white/50'}`}>{t.label}</button>
+                <button key={t.id} onClick={()=>setActiveTab(t.id)} className={`flex-1 min-w-[120px] flex items-center justify-center py-2 text-[10px] md:text-xs font-bold tracking-widest uppercase transition-all rounded-[1.2rem] ${activeTab === t.id ? 'bg-gradient-to-r from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#B026FF] text-white shadow-md' : 'text-gray-500 hover:bg-white/50'}`}>{t.label}</button>
              ))}
           </div>
 
@@ -1546,10 +1511,16 @@
             <div className="px-6 py-2 bg-teal-100 dark:bg-[#0A1128]/90 text-teal-600 dark:text-[#00F0FF] rounded-full font-bold text-[10px] uppercase tracking-widest border border-teal-200 dark:border-[#00F0FF]/30 backdrop-blur shadow-lg flex items-center gap-2"><RefreshCw size={14} className={saveStatus === 'saving' ? "animate-spin" : "hidden"} />{saveStatus === 'saving' ? 'Menyimpan...' : 'Tersimpan Otomatis'}</div>
           </div>
 
-          <div className="md:hidden grid grid-cols-2 gap-2 bg-blue-50/60 dark:bg-[#0A1128]/60 p-2 rounded-2xl border border-blue-200/50 dark:border-blue-900/50 mb-2 shadow-inner">
+          <div className="md:hidden grid grid-cols-3 gap-y-5 gap-x-2 bg-slate-100/80 dark:bg-[#0A1128]/80 p-5 rounded-[2rem] border border-slate-200/80 dark:border-slate-800/80 mb-4 shadow-inner">
             {allowedTabs.map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-3 py-3 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all justify-center ${activeTab === tab.id ? 'bg-white dark:bg-[#111827] text-[#0070BA] dark:text-[#00F0FF] shadow-sm border border-[#0070BA]/20' : 'text-gray-500 hover:bg-white/50'}`}>
-                <tab.icon size={14} /> <span className="truncate">{tab.label}</span>
+              <MobileAdaptiveTab key={tab.id} active={activeTab === tab.id} icon={tab.icon} label={tab.label} onClick={() => setActiveTab(tab.id)} />
+            ))}
+          </div>
+
+          <div className="hidden md:flex bg-white/40 dark:bg-[#0A1128]/50 p-1.5 rounded-3xl border border-black/5 dark:border-white/5 w-full overflow-x-auto custom-scrollbar mb-2">
+            {allowedTabs.map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl font-bold text-[10px] uppercase tracking-widest transition-all min-w-fit flex-1 justify-center ${activeTab === tab.id ? 'bg-gradient-to-r from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#B026FF] text-white shadow-md' : 'text-gray-500 hover:bg-white/50'}`}>
+                <tab.icon size={16} /> {tab.label}
               </button>
             ))}
           </div>
@@ -1636,7 +1607,7 @@
                       <td className="p-4 opacity-80 font-normal align-middle">{item.type === 'text' ? (editingIndex === item.index ? <input type="text" value={editValue} onChange={e => setEditValue(e.target.value)} className="w-full max-w-[250px] bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/50 rounded px-3 py-1.5 outline-none font-bold" autoFocus /> : item.value) : (<div className="w-20 h-10 bg-black/5 rounded flex items-center justify-center border border-[#0070BA]/20 relative">{item.value ? <img src={item.value} alt="preview" className="w-full h-full object-contain p-0.5" /> : <ImageIcon size={16} className="opacity-40" />}</div>)}</td>
                       <td className="p-4 align-middle">
                          <div className="flex w-full">
-                            {item.type === 'text' ? (editingIndex === item.index ? <div className="flex gap-2"><button onClick={()=>handleSaveEdit(item.index)} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={()=>setEditingIndex(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div> : <button onClick={()=>handleEdit(item.index, item.value)} className="p-1.5 bg-amber-100 text-amber-600 rounded"><Edit size={14}/></button>) : (<div className="relative w-fit"><button className="p-1.5 bg-[#0070BA]/10 text-[#0070BA] dark:text-[#00F0FF] rounded"><Upload size={14} /></button><input type="file" accept="image/*" onChange={e => { const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>{ setUiSettings(p=>({...p,[item.id]:r.result})); simulateAutoSave(); }; r.readAsDataURL(f); } }} className="absolute inset-0 opacity-0 cursor-pointer" /></div>)}
+                            {item.type === 'text' ? (editingIndex === item.index ? <div className="flex gap-2"><button onClick={()=>handleSaveEdit(item.index)} className="p-1.5 bg-teal-100 text-teal-600 rounded" title="Simpan"><Check size={14}/></button><button onClick={()=>setEditingIndex(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded" title="Batal"><XCircle size={14}/></button></div> : <button onClick={()=>handleEdit(item.index, item.value)} className="p-1.5 bg-amber-100 text-amber-600 rounded" title="Edit"><PencilIconToUse size={14}/></button>) : (<div className="relative w-fit"><button className="p-1.5 bg-[#0070BA]/10 text-[#0070BA] dark:text-[#00F0FF] rounded"><Upload size={14} /></button><input type="file" accept="image/*" onChange={e => { const f=e.target.files[0]; if(f){ const r=new FileReader(); r.onloadend=()=>{ setUiSettings(p=>({...p,[item.id]:r.result})); simulateAutoSave(); }; r.readAsDataURL(f); } }} className="absolute inset-0 opacity-0 cursor-pointer" /></div>)}
                          </div>
                       </td>
                     </tr>
@@ -1707,9 +1678,16 @@
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:flex bg-white/40 dark:bg-[#0A1128]/50 p-1.5 rounded-2xl border border-black/5 gap-1.5">
+          <div className="hidden md:flex bg-white/40 dark:bg-[#0A1128]/50 p-1.5 rounded-2xl border border-black/5 gap-1.5">
              {[ {id:'data', label:'Data Karyawan', icon: Users}, {id:'jabatan', label:'Data Jabatan', icon: Shield}, {id:'departemen', label:'Data Departemen', icon: Briefcase} ].map(t => {
-               const isActive = subTab === t.id || (subTab === 'registrasi' && t.id === 'data'); return (<button key={t.id} onClick={() => { setSubTab(t.id); setEditIndex(null); }} className={`flex items-center justify-center gap-2 flex-1 py-3 text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all ${isActive ? 'bg-white dark:bg-[#00F0FF]/10 text-[#0070BA] dark:text-[#00F0FF] shadow-sm' : 'text-gray-500'}`}><t.icon size={16} /> <span>{t.label}</span></button>);
+               const isActive = subTab === t.id || (subTab === 'registrasi' && t.id === 'data'); return (<button key={t.id} onClick={() => { setSubTab(t.id); setEditIndex(null); }} className={`flex items-center justify-center gap-2 flex-1 py-3 text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all ${isActive ? 'bg-gradient-to-r from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#B026FF] text-white shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}><t.icon size={16} /> <span>{t.label}</span></button>);
+             })}
+          </div>
+
+          <div className="md:hidden grid grid-cols-3 gap-2 bg-blue-50/60 dark:bg-[#0A1128]/60 p-4 rounded-[2rem] border border-blue-200/50 dark:border-blue-900/50 mb-2 shadow-inner">
+             {[ {id:'data', label:'Karyawan', icon: Users}, {id:'jabatan', label:'Jabatan', icon: Shield}, {id:'departemen', label:'Departemen', icon: Briefcase} ].map(t => {
+               const isActive = subTab === t.id || (subTab === 'registrasi' && t.id === 'data'); 
+               return <MobileAdaptiveTab key={t.id} active={isActive} icon={t.icon} label={t.label} onClick={() => { setSubTab(t.id); setEditIndex(null); }} />;
              })}
           </div>
 
@@ -1865,9 +1843,15 @@
 
       return (
         <div className="space-y-4 animate-fade-in-up">
-          <div className="flex bg-white/40 dark:bg-[#0A1128]/50 p-1 rounded-2xl border border-[#0070BA]/10 w-full overflow-x-auto mask-edges custom-scrollbar">
+          <div className="hidden md:flex bg-white/40 dark:bg-[#0A1128]/50 p-1 rounded-2xl border border-[#0070BA]/10 w-full overflow-x-auto mask-edges custom-scrollbar">
              {[ {id:'jadwal', label:'Jam Kerja'}, {id:'uang', label:'Uang Makan'}, {id:'lembur', label:'Parameter Lembur'}, {id:'libur', label:'Libur Nasional'} ].map(t => (
-               <button key={t.id} onClick={() => setSubTab(t.id)} className={`flex-1 min-w-[140px] py-2.5 text-[9px] md:text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all ${subTab === t.id ? 'bg-white dark:bg-[#00F0FF]/10 text-[#0070BA] dark:text-[#00F0FF] shadow-sm' : 'text-gray-500 hover:text-[#0070BA]'}`}>{t.label}</button>
+               <button key={t.id} onClick={() => setSubTab(t.id)} className={`flex-1 min-w-[140px] py-2.5 text-[9px] md:text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all ${subTab === t.id ? 'bg-gradient-to-r from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#B026FF] text-white shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>{t.label}</button>
+             ))}
+          </div>
+          
+          <div className="md:hidden grid grid-cols-4 gap-2 bg-emerald-50/60 dark:bg-[#0A1128]/60 p-4 rounded-[2rem] border border-emerald-200/50 dark:border-emerald-900/50 mb-2 shadow-inner">
+             {[ {id:'jadwal', label:'Jadwal', icon: Clock}, {id:'uang', label:'Uang Mkn', icon: FileText}, {id:'lembur', label:'Lembur', icon: Shield}, {id:'libur', label:'Libur', icon: Calendar} ].map(t => (
+               <MobileAdaptiveTab key={t.id} active={subTab === t.id} icon={t.icon} label={t.label} onClick={() => setSubTab(t.id)} />
              ))}
           </div>
 

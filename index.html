@@ -99,9 +99,10 @@
     // KONFIGURASI DATABASE LAT:-6.1522193,LNG:106.7916433
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.7916433 };
+    const OFFICE_QR_VALUE = 'KANTOR';
     const RADIUS_TOLERANCE_METERS = 100;
     const GPS_HISTORY_SIZE = 5;
-    const COLORS = { hadir: '#00F0FF', telat: '#FFB800', absen: '#FF003C', purple: '#B026FF', orange: '#FF5E00', lightPrimary: '#0070BA' };
+    const COLORS = { hadir: '#00F0FF', telat: '#FFB800', absen: '#FF003C', purple: '#B026FF', orange: '#FF5E00', lightPrimary: '#0070BA' }; 
 
     // --- HELPER FUNCTIONS ---
     const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -1007,7 +1008,8 @@
                 }
                 
                 if (detectedCode) {
-                    if (detectedCode.includes(`LAT:${OFFICE_COORD.lat}`) && detectedCode.includes(`LNG:${OFFICE_COORD.lng}`)) {
+                    const normalizedCode = String(detectedCode).trim().toUpperCase();
+                    if (normalizedCode === OFFICE_QR_VALUE) {
                         clearInterval(checkTimer);
                         setQrVerified(true);
                         setMethod('selfie');
@@ -1092,7 +1094,7 @@
              <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;{RADIUS_TOLERANCE_METERS}m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
           )}
           {qrWarning && (
-             <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Barcode tidak valid! Pastikan memindai QR Code absensi resmi perusahaan.</p></div>
+             <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>QR Code tidak valid! Pastikan memindai QR Code dengan teks "KANTOR" dan berada dalam radius kantor.</p></div>
           )}
           {qrVerified && (
              <div className="bg-teal-100 dark:bg-[#00F0FF]/10 border border-teal-500 text-teal-700 dark:text-[#00F0FF] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md"><CheckCircle size={20} className="shrink-0" /><p>QR kantor terdeteksi. Silakan ambil foto selfie untuk menyelesaikan absensi.</p></div>

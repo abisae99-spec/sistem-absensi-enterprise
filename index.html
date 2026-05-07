@@ -99,7 +99,8 @@
     // KONFIGURASI DATABASE LAT:-6.1522193,LNG:106.7916433
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.7916433 };
-    const RADIUS_TOLERANCE_METERS = 50;
+    const RADIUS_TOLERANCE_METERS = 100;
+    const GPS_HISTORY_SIZE = 5;
     const COLORS = { hadir: '#00F0FF', telat: '#FFB800', absen: '#FF003C', purple: '#B026FF', orange: '#FF5E00', lightPrimary: '#0070BA' };
 
     // --- HELPER FUNCTIONS ---
@@ -925,6 +926,8 @@
       const [outOfRadiusWarning, setOutOfRadiusWarning] = useState(false);
       const [qrWarning, setQrWarning] = useState(false);
       const [qrVerified, setQrVerified] = useState(false);
+      const [gpsAccuracy, setGpsAccuracy] = useState(0);
+      const gpsHistoryRef = useRef([]);
       const videoRef = useRef(null); const topRef = useRef(null); const [currentTime, setCurrentTime] = useState(new Date());
 
       useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
@@ -933,7 +936,21 @@
       useEffect(() => { 
          if (!("geolocation" in navigator)) return;
          let watchId = navigator.geolocation.watchPosition(async (pos) => { 
-            const lat = pos.coords.latitude; const lng = pos.coords.longitude; setCurrentCoord({ lat, lng }); setDistance(calculateDistance(lat, lng, OFFICE_COORD.lat, OFFICE_COORD.lng)); 
+            const lat = pos.coords.latitude; const lng = pos.coords.longitude; 
+            const accuracy = pos.coords.accuracy || 0;
+            setGpsAccuracy(Math.round(accuracy));
+            
+            // GPS History untuk averaging (mengurangi noise)
+            gpsHistoryRef.current.push({ lat, lng });
+            if (gpsHistoryRef.current.length > GPS_HISTORY_SIZE) gpsHistoryRef.current.shift();
+            
+            // Hitung rata-rata dari beberapa pembacaan terakhir
+            const avgLat = gpsHistoryRef.current.reduce((sum, p) => sum + p.lat, 0) / gpsHistoryRef.current.length;
+            const avgLng = gpsHistoryRef.current.reduce((sum, p) => sum + p.lng, 0) / gpsHistoryRef.current.length;
+            
+            setCurrentCoord({ lat: avgLat, lng: avgLng }); 
+            setDistance(calculateDistance(avgLat, avgLng, OFFICE_COORD.lat, OFFICE_COORD.lng)); 
+            
             try {
                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=id`);
                const data = await res.json(); 
@@ -955,8 +972,8 @@
                  else locStr = data.display_name;
                } setLocationName(locStr);
             } catch(e) { setLocationName(`Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`); }
-         }, (err) => { setDistance(0); setLocationName('Akses GPS Gagal / Ditolak'); }, { enableHighAccuracy: true, maximumAge: 0 }); 
-         return () => navigator.geolocation.clearWatch(watchId);
+         }, (err) => { setDistance(0); setLocationName('Akses GPS Gagal / Ditolak'); }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }); 
+         return () => { navigator.geolocation.clearWatch(watchId); gpsHistoryRef.current = []; };
       }, []);
 
       useEffect(() => { if (distance > RADIUS_TOLERANCE_METERS && method === 'barcode') { setMethod('selfie'); setOutOfRadiusWarning(true); setTimeout(() => setOutOfRadiusWarning(false), 6000); } }, [distance, method]);
@@ -1072,7 +1089,7 @@
       return (
         <div ref={topRef} className="max-w-2xl mx-auto space-y-4 animate-fade-in-up pt-2 pb-10">
           {outOfRadiusWarning && (
-             <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;50m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
+             <div className="bg-rose-100 dark:bg-[#FF003C]/20 border border-rose-500 text-rose-600 dark:text-[#FF003C] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Anda berada di luar radius kantor (&gt;{RADIUS_TOLERANCE_METERS}m). Mode dialihkan otomatis ke Dinas Luar (Selfie).</p></div>
           )}
           {qrWarning && (
              <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Barcode tidak valid! Pastikan memindai QR Code absensi resmi perusahaan.</p></div>
@@ -1093,9 +1110,15 @@
             <button onClick={() => { setMethod('selfie'); setCapturedPhoto(null); }} className={`flex-1 flex items-center justify-center py-3 text-xs md:text-sm font-black tracking-widest uppercase transition-all z-10 ${method === 'selfie' ? 'text-white drop-shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>Foto Selfie</button>
           </div>
 
-          <div className="bg-white/50 dark:bg-[#0A1128]/80 p-3 md:p-4 rounded-2xl border border-[#0070BA]/20 dark:border-[#00F0FF]/20 flex items-center gap-3">
-             <MapPin className="text-[#0070BA] dark:text-[#00F0FF] shrink-0" size={20} />
-             <div className="flex-1 flex items-center gap-2 overflow-hidden"><span className="text-[9px] md:text-[10px] font-bold text-gray-500 uppercase tracking-widest shrink-0">Lokasi Saat Ini:</span><span className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white truncate" title={locationName}>{locationName}</span></div>
+          <div className="bg-white/50 dark:bg-[#0A1128]/80 p-3 md:p-4 rounded-2xl border border-[#0070BA]/20 dark:border-[#00F0FF]/20">
+             <div className="flex items-center gap-3 mb-2">
+                <MapPin className="text-[#0070BA] dark:text-[#00F0FF] shrink-0" size={20} />
+                <div className="flex-1 flex items-center gap-2 overflow-hidden"><span className="text-[9px] md:text-[10px] font-bold text-gray-500 uppercase tracking-widest shrink-0">Lokasi Saat Ini:</span><span className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white truncate" title={locationName}>{locationName}</span></div>
+             </div>
+             <div className="flex items-center justify-between text-[9px] md:text-[10px] font-mono text-gray-600 dark:text-gray-400 pl-8">
+                <span>Jarak: <strong className={distance <= RADIUS_TOLERANCE_METERS ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}>{distance.toFixed(1)}m</strong></span>
+                <span>GPS Akurasi: <strong>{gpsAccuracy}m</strong></span>
+             </div>
           </div>
 
           <GlassCard className="h-[450px] md:h-[500px] flex flex-col items-center justify-center relative overflow-hidden bg-[#111827]">

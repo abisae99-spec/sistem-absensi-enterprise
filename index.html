@@ -96,7 +96,7 @@
 
     const PencilIconToUse = LucideLib.Pencil || LucideLib.Edit3 || LucideLib.Edit || EditIconFallback;
 
-    // KONFIGURASI DATABASE lat: -6.1522193, lng: 106.7916433
+    // KONFIGURASI DATABASE LAT:-6.1522193,LNG:106.7916433
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.7916433 };
     const RADIUS_TOLERANCE_METERS = 100;
@@ -995,7 +995,7 @@
       useEffect(() => {
         let currentStream;
         const initCamera = async () => {
-          if (!capturedPhoto && navigator.mediaDevices) {
+          if (!capturedPhoto && method !== 'pdf' && navigator.mediaDevices) {
             try { const constraints = { video: { facingMode: method === 'selfie' ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } }; currentStream = await navigator.mediaDevices.getUserMedia(constraints); if (videoRef.current) videoRef.current.srcObject = currentStream; } 
             catch (err) { try { currentStream = await navigator.mediaDevices.getUserMedia({ video: true }); if (videoRef.current) videoRef.current.srcObject = currentStream; } catch (e) {} }
           }
@@ -1021,12 +1021,21 @@
                 }
                 
                 if (detectedCode) {
-                    if (detectedCode.includes(`LAT:${OFFICE_COORD.lat}`) && detectedCode.includes(`LNG:${OFFICE_COORD.lng}`)) {
+                    if (detectedCode.includes('KANTOR')) {
                         clearInterval(checkTimer);
                         setQrVerified(true);
-                        setMethod('selfie');
-                        setCapturedPhoto(null);
                         setQrWarning(false);
+                        // Langsung simpan absensi tanpa perlu ke selfie
+                        setIsProcessing(true);
+                        const now = new Date(); 
+                        const shiftVal = '08:00 - 17:00'; 
+                        const statusObj = getAttendanceStatus(now, attendanceType, shiftVal, attendancePolicy, false);
+                        const locName = distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName;
+                        const statusLabel = statusObj.notification || statusObj.status;
+                        const newAbsenPayload = { type: attendanceType, id: user?.id || 'EMP01', nama: user?.name || 'User', date: now.toISOString().split('T')[0], displayDate: formatIndoDate(now.toISOString().split('T')[0]), day: now.toLocaleDateString('id-ID', {weekday: 'long'}), shift: shiftVal, checkIn: attendanceType === 'IN' ? formatTime(now) : '', checkOut: attendanceType === 'OUT' ? formatTime(now) : '', loc: locName, lat: currentCoord.lat, lng: currentCoord.lng, status: statusObj.status.toUpperCase(), statusIn: attendanceType === 'IN' ? statusObj.status : undefined, statusOut: attendanceType === 'OUT' ? statusObj.status : undefined, keterangan: 'Scan QR Kantor', hours: attendanceType === 'IN' ? 0 : 9, foto: '' };
+                        if (onRecordAbsen) onRecordAbsen(newAbsenPayload);
+                        setResult({ success: statusObj.status !== 'Diluar Batas', time: formatTime(now), status: statusLabel, locName: locName, color: statusObj.color.split(' ')[0] });
+                        setIsProcessing(false);
                         setTimeout(() => setQrVerified(false), 8000);
                         return;
                     } else {

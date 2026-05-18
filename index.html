@@ -28,12 +28,30 @@
   </script>
 
   <!-- Library Grafik & Ikon -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.1.9/Recharts.js"></script>
+  <script src="https://unpkg.com/recharts@2.1.9/umd/Recharts.js"></script>
   <script src="https://unpkg.com/lucide-react@0.292.0/dist/umd/lucide-react.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
   <!-- Babel untuk JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Override Alert & Confirm for Iframe -->
+  <script>
+    window.alert = function(message) {
+      const modal = document.createElement('div');
+      modal.style.cssText = 'position:fixed; inset:0; z-index:999999; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px);';
+      const box = document.createElement('div');
+      box.style.cssText = 'background:white; padding:24px; border-radius:16px; max-width:90%; width:320px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.2);';
+      box.innerHTML = `<p style="color:#134E4A; font-weight:bold; margin-bottom:20px; font-family:sans-serif; font-size: 14px;">${message}</p><button style="background:#0070BA; color:white; padding:10px 24px; border:none; border-radius:8px; font-weight:bold; cursor:pointer;" onclick="this.parentElement.parentElement.remove()">Tutup</button>`;
+      modal.appendChild(box);
+      document.body.appendChild(modal);
+    };
+    window.confirm = function(message) {
+        console.warn("Auto-confirmed action: ", message);
+        return true; 
+    };
+  </script>
 
   <style>
     body { margin: 0; padding: 0; background-color: #E0F2F1; }
@@ -57,11 +75,11 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useMemo } = React;
     
     // --- Safe Imports for Recharts ---
     const RechartsLib = window.Recharts || {};
-    const FallbackComponent = ({ children }) => <div className="fallback-chart">{children}</div>;
+    const FallbackComponent = ({ children }) => <div className="flex items-center justify-center h-full w-full text-xs text-[#0070BA] font-bold border border-dashed border-[#0070BA]/30 rounded-xl bg-white/10">Grafik Tidak Tersedia</div>;
     const { 
       AreaChart = FallbackComponent, Area = FallbackComponent, PieChart = FallbackComponent, Pie = FallbackComponent, 
       Cell = FallbackComponent, XAxis = FallbackComponent, YAxis = FallbackComponent, CartesianGrid = FallbackComponent, 
@@ -91,12 +109,13 @@
       Download = FallbackIcon, Search = FallbackIcon, CheckSquare = CheckIconFallback, Users = FallbackIcon, 
       RefreshCw = FallbackIcon, Shield = FallbackIcon, Check = CheckIconFallback, Image: ImageIcon = FallbackIcon, 
       Save = SaveIconFallback, Upload = FallbackIcon, Printer = FallbackIcon, ToggleLeft = FallbackIcon, 
-      ToggleRight = FallbackIcon, FileDown = FallbackIcon, ImagePlus = CameraIconFallback, Loader2 = FallbackIcon 
+      ToggleRight = FallbackIcon, FileDown = FallbackIcon, ImagePlus = CameraIconFallback, Loader2 = FallbackIcon,
+      ChevronLeft = FallbackIcon, ChevronRight = FallbackIcon
     } = LucideLib;
 
     const PencilIconToUse = LucideLib.Pencil || LucideLib.Edit3 || LucideLib.Edit || EditIconFallback;
 
-    // KONFIGURASI DATABASE LAT:-6.1522193,LNG:106.7916433
+    // KONFIGURASI DATABASE
     const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.7916433 };
     const RADIUS_TOLERANCE_METERS = 100;
@@ -127,45 +146,13 @@
         if (str.includes('T')) str = str.split('T')[0]; if (str.includes(' ')) str = str.split(' ')[0];
         const p = str.split('-'); return p.length === 3 ? `${p[2].padStart(2,'0')}/${p[1].padStart(2,'0')}/${p[0]}` : str; 
     };
-    const formatSheetTime = (val) => { if (!val) return ''; let strVal = String(val); if (strVal.includes('T')) { const timePart = strVal.split('T')[1]; if (timePart) return timePart.substring(0, 5); } return strVal; };
-
-    const getAttendanceStatus = (time, type, shiftStr = '08:00 - 17:00', policy = { maxCheckInEarly: 240, minCheckOutEarly: 299, lemburStart: 90 }, isApproved = false) => {
-      const [sIn, sOut] = shiftStr.split('-').map(t => t.trim());
-      const toMins = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
-      const totalMins = time.getHours() * 60 + time.getMinutes();
-      const sInM = toMins(sIn); const sOutM = toMins(sOut);
-      
-      if (type === 'IN') {
-        const diff = totalMins - sInM;
-        if (diff < -policy.maxCheckInEarly) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
-        if (diff <= 10) return { status: 'Normal', color: 'text-emerald-600 dark:text-emerald-400' };
-        if (diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
-        if (diff > 120 && diff <= 240) return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
-        return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
-      } else {
-        const early = sOutM - totalMins;
-        const overtime = totalMins - sOutM;
-        if (totalMins < sOutM - policy.minCheckOutEarly) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500', notification: 'Diluar Batas' };
-        if (early >= 121 && early <= 299) return { status: 'Plg Awal', color: 'text-amber-500 dark:text-amber-400', notification: 'Awal' };
-        if (early >= 1 && early < 121) return { status: 'Plg Cepat', color: 'text-amber-500 dark:text-amber-400', notification: 'Cepat' };
-        if (overtime < policy.lemburStart) return { status: 'Plg Normal', color: 'text-[#0070BA] dark:text-cyan-400', notification: 'Normal' };
-        return { status: isApproved ? 'Lembur' : 'Normal', color: isApproved ? 'text-purple-600 dark:text-fuchsia-400' : 'text-[#0070BA] dark:text-cyan-400', notification: isApproved ? 'Lembur' : 'Normal' };
-      }
-    };
-
+    
     const cleanTimeStr = (t) => {
       if (!t || t === '-' || String(t).trim() === '') return '-';
-      
       if (typeof t === 'string' && t.includes('T') && t.includes('Z')) {
           const d = new Date(t);
-          if (!isNaN(d.getTime())) {
-              const hh = String(d.getHours()).padStart(2, '0');
-              const mm = String(d.getMinutes()).padStart(2, '0');
-              const ss = String(d.getSeconds()).padStart(2, '0');
-              return `${hh}:${mm}:${ss}`;
-          }
+          if (!isNaN(d.getTime())) return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
       }
-
       let str = String(t).trim();
       if (str.includes('T')) { const timePart = str.split('T')[1]; if(timePart) str = timePart; }
       str = str.replace(/\./g, ':');
@@ -179,16 +166,58 @@
       return str;
     };
 
+    const formatSheetTime = (val) => { 
+        if (!val || val === '-') return '';
+        const cleaned = cleanTimeStr(val);
+        return cleaned !== '-' ? cleaned.substring(0, 5) : '';
+    };
+
+    const toMins = (t) => { 
+        if(!t || t === '-') return null;
+        const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); 
+    };
+    
     const toHHMM = (m) => m <= 0 ? '-' : `${String(Math.floor(m/60)).padStart(2, '0')}:${String(m%60).padStart(2, '0')}`;
 
-    const calculateTimes = (shift, checkIn, checkOut) => {
-      const cin = cleanTimeStr(checkIn); const cout = cleanTimeStr(checkOut);
-      const [sIn, sOut] = (shift || '08:00 - 17:00').split('-').map(t => t.trim()); 
+    const getAttendanceStatus = (time, type, shiftStr = '08:00 - 17:00') => {
+      const [sIn, sOut] = shiftStr.split('-').map(t => t.trim());
       const toMins = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
-      const sInM = toMins(sIn); const sOutM = toMins(sOut); 
+      const totalMins = time.getHours() * 60 + time.getMinutes();
+      const sInM = toMins(sIn); const sOutM = toMins(sOut);
+      
+      if (type === 'IN') {
+        const diff = totalMins - sInM;
+        if (diff < -180) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
+        if (diff <= 10) return { status: 'Normal', color: 'text-emerald-600 dark:text-emerald-400' };
+        if (diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
+        return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
+      } else {
+        const early = sOutM - totalMins;
+        const overtime = totalMins - sOutM;
+        if (early > 299) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
+        if (early >= 121) return { status: 'Plg Awal', color: 'text-rose-600 dark:text-rose-500' };
+        if (early >= 1) return { status: 'Plg Cepat', color: 'text-amber-500 dark:text-amber-400' };
+        if (overtime >= 90) return { status: 'Lembur', color: 'text-purple-600 dark:text-fuchsia-400' };
+        return { status: 'Plg Normal', color: 'text-[#0070BA] dark:text-cyan-400' };
+      }
+    };
+
+    const getEmpShift = (empId, employees, schedules) => {
+        const emp = employees?.find(e => String(e.id).trim().toUpperCase() === String(empId).trim().toUpperCase());
+        if (!emp) return { in: '08:00', out: '17:00' };
+        const empDept = String(emp.dept || '').trim().toLowerCase();
+        const deptSched = schedules?.find(s => String(s.dept || '').trim().toLowerCase() === empDept);
+        if (deptSched && deptSched.in && deptSched.out) return { in: cleanTimeStr(deptSched.in).substring(0,5), out: cleanTimeStr(deptSched.out).substring(0,5) };
+        const defaultSched = schedules?.find(s => String(s.dept || '').trim().toLowerCase() === 'semua departemen');
+        return defaultSched && defaultSched.in && defaultSched.out ? { in: cleanTimeStr(defaultSched.in).substring(0,5), out: cleanTimeStr(defaultSched.out).substring(0,5) } : { in: '08:00', out: '17:00' };
+    };
+
+    const calculateTimes = (shiftIn, shiftOut, checkIn, checkOut) => {
+      const cin = cleanTimeStr(checkIn); const cout = cleanTimeStr(checkOut);
+      const sInM = toMins(shiftIn); const sOutM = toMins(shiftOut); 
       
       let telatM = 0; let telatStr = '-';
-      if (cin && cin !== '-') {
+      if (cin !== '-') {
           const aInM = toMins(cin);
           telatM = aInM > sInM ? aInM - sInM : 0;
           telatStr = telatM > 0 ? toHHMM(telatM) : '-';
@@ -197,78 +226,179 @@
       let awalM = 0; let lemburM = 0; let kerjaM = 0;
       let awalStr = '-'; let lemburStr = '-'; let kerjaStr = '-';
 
-      if (cout && cout !== '-') {
+      if (cout !== '-') {
           const aOutM = toMins(cout);
           awalM = aOutM < sOutM ? sOutM - aOutM : 0;
           lemburM = aOutM > sOutM ? aOutM - sOutM : 0;
           awalStr = awalM > 0 ? toHHMM(awalM) : '-';
           lemburStr = lemburM > 0 ? toHHMM(lemburM) : '-';
-          
-          if (cin && cin !== '-') {
-              const aInM = toMins(cin);
-              kerjaM = aOutM - aInM;
+          if (cin !== '-') {
+              kerjaM = aOutM - toMins(cin);
               if (kerjaM < 0) kerjaM = 0;
               kerjaStr = kerjaM > 0 ? toHHMM(kerjaM) : '-';
           }
       }
-
       return { kerja: kerjaStr, telat: telatStr, awal: awalStr, lembur: lemburStr, telatMins: telatM, lemburMins: lemburM };
     };
 
     const getStatusClass = (status) => {
-      if (!status || status === '-' || status === 'Normal' && status !== 'Diluar Batas') return 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30';
+      if (!status || status === '-') return 'text-gray-400 bg-gray-100 border-gray-200';
       const lower = String(status).toLowerCase();
-      if (lower.includes('sangat telat') || lower.includes('diluar batas')) return 'text-rose-600 bg-rose-100 border-rose-300';
-      if (lower.includes('telat') || lower.includes('plg awal') || lower.includes('awal') || lower.includes('plg cepat') || lower.includes('cepat')) return 'text-amber-600 bg-amber-100 border-amber-300';
-      if (lower.includes('lembur')) return 'text-purple-600 bg-purple-100 border-purple-300';
-      if (lower.includes('sakit') || lower.includes('cuti') || lower.includes('izin') || lower.includes('absen')) return 'text-purple-600 bg-purple-100 border-purple-300';
+      if (lower.includes('sangat telat') || lower.includes('plg awal') || lower.includes('absen') || lower.includes('alfa')) return 'text-rose-600 bg-rose-100 border-rose-300';
+      if (lower.includes('telat') || lower.includes('cepat')) return 'text-amber-600 bg-amber-100 border-amber-300';
+      if (lower.includes('lembur') || lower.includes('sakit') || lower.includes('cuti') || lower.includes('izin')) return 'text-purple-600 bg-purple-100 border-purple-300';
+      if (lower.includes('normal') || lower.includes('hadir')) return 'text-emerald-600 bg-emerald-100 border-emerald-300';
       return 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30';
     };
 
-    const determineStatusInOut = (checkIn, checkOut, type) => {
-      if (type === 'IN') {
-        if (!checkIn || checkIn === '-' || String(checkIn).trim() === '') return 'Sangat Telat';
-        return null;
-      } else {
-        if (!checkOut || checkOut === '-' || String(checkOut).trim() === '') return 'Plg Awal';
-        return null;
-      }
-    };
-
-    const getDisplayKeterangan = (row, globalRequests) => {
-        let ket = row.note || ''; 
-        const relatedReq = globalRequests?.find(req => req.id === row.id && new Date(req.tglMulai) <= new Date(row.date) && new Date(req.tglSelesai) >= new Date(row.date));
+    // FUNGSI UTAMA KALKULASI DATA ABSENSI KEBAL ZONA WAKTU & ATURAN MENIT
+    const buildCompleteAttendanceView = (rawAttendance, employees, requests, schedules, libur, cutiBersama, startStr, endStr, specificUserId = null) => {
+        if (!startStr || !endStr) return [];
         
-        if(relatedReq) { 
-            if (relatedReq.status === 'Approved') {
-                ket = relatedReq.jenis.toLowerCase().includes('lembur') ? 'Lembur Disetujui' : `${relatedReq.jenis} Disetujui`;
-            } else {
-                ket = `${relatedReq.jenis} Belum Disetujui`;
+        const result = [];
+        const attendanceMap = new Map();
+        // Hanya simpan 1 record per tanggal (mencegah ganda dari sisi data raw)
+        rawAttendance.forEach(a => {
+            const key = `${String(a.id).toUpperCase()}_${a.date}`;
+            if (!attendanceMap.has(key)) attendanceMap.set(key, a);
+            else {
+                const existing = attendanceMap.get(key);
+                if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') existing.checkOut = a.checkOut;
+                if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') existing.checkIn = a.checkIn;
             }
-        } else if(row.status === 'HADIR' || row.status === 'TELAT') { 
-            ket = ''; 
-        } else if(row.status === 'ABSEN' && (!row.note || row.note === '-')) { 
-            ket = 'Alfa / Tanpa Keterangan'; 
-        } else if(row.foto || (row.note && row.note.toLowerCase().includes('selfie')) || (row.keterangan && row.keterangan.toLowerCase().includes('selfie'))) {
-            ket = 'Dinas Luar';
-        } else if(row.status === 'SAKIT') {
-            ket = 'Sakit';
-        }
-        return ket;
-    };
+        });
+        
+        const liburSet = new Set(libur?.map(l => l.date) || []);
+        cutiBersama?.forEach(cb => {
+             if (!cb.tglMulai || cb.tglMulai === '' || !cb.tglSelesai || cb.tglSelesai === '') return;
+             const [y1, m1, d1] = cb.tglMulai.split('-');
+             let d = new Date(y1, m1 - 1, d1);
+             const [y2, m2, d2] = cb.tglSelesai.split('-');
+             let endCb = new Date(y2, m2 - 1, d2);
+             while(d <= endCb) {
+                 liburSet.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+                 d.setDate(d.getDate() + 1);
+             }
+        });
 
-    const sendDataToSheet = async (data) => {
-      try {
-        const response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(data), redirect: 'follow' });
-        return await response.json();
-      } catch (error) {
-        if (data.action === 'login') {
-          let role = 'user'; let pw = data.password; let user = data.username.toLowerCase();
-          if(user === 'admin' && pw === 'iaf2026') role = 'admin'; else if(user === 'top' && pw === 'iaf2026') role = 'top'; else if(user === 'manager' && pw === 'iaf2026') role = 'manager'; else if(user === 'spv' && pw === user) role = 'supervisor'; else if(user === pw) role = 'user'; else throw new Error("Kredensial tidak sesuai master data!");
-          return { status: 'success', user: { id: data.username.toUpperCase(), name: data.username.toUpperCase(), dept: 'Departemen Terkait', role: role } };
-        }
-        return { status: 'success', message: 'Tersimpan (Offline Mode)' };
-      }
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+        const emps = specificUserId ? employees.filter(e => String(e.id).toUpperCase() === String(specificUserId).toUpperCase()) : employees;
+        
+        emps.forEach(emp => {
+            const shiftObj = getEmpShift(emp.id, employees, schedules);
+            const shiftInMins = toMins(shiftObj.in);
+            const shiftOutMins = toMins(shiftObj.out);
+            const shiftDisplay = `${cleanTimeStr(shiftObj.in)} - ${cleanTimeStr(shiftObj.out)}`;
+            
+            if(!startStr || startStr === '' || !endStr || endStr === '') return;
+            const [sY, sM, sD] = startStr.split('-'); let curr = new Date(sY, sM - 1, sD);
+            const [eY, eM, eD] = endStr.split('-'); let endObj = new Date(eY, eM - 1, eD);
+            
+            while(curr <= endObj) {
+                const dateStr = `${curr.getFullYear()}-${String(curr.getMonth() + 1).padStart(2, '0')}-${String(curr.getDate()).padStart(2, '0')}`;
+                if (dateStr > todayStr) break; // SKIP FUTURE DATES
+
+                const key = `${String(emp.id).toUpperCase()}_${dateStr}`;
+                const rawRecord = attendanceMap.get(key) || null;
+                const reqData = requests?.find(r => String(r.id).toUpperCase() === String(emp.id).toUpperCase() && dateStr >= r.tglMulai && dateStr <= r.tglSelesai);
+                const dayName = curr.toLocaleDateString('id-ID', {weekday: 'long'});
+                const isWeekend = curr.getDay() === 0 || curr.getDay() === 6;
+                const isLibur = liburSet.has(dateStr);
+
+                let cin = rawRecord ? cleanTimeStr(rawRecord.checkIn) : '-';
+                let cout = rawRecord ? cleanTimeStr(rawRecord.checkOut) : '-';
+                const cinMins = cin !== '-' ? toMins(cin) : null;
+                const coutMins = cout !== '-' ? toMins(cout) : null;
+
+                // --- STATUS IN LOGIC ---
+                let statIn = '-';
+                if (cinMins === null) statIn = 'Sangat Telat';
+                else if (cinMins <= shiftInMins + 10) statIn = 'Normal';
+                else if (cinMins <= shiftInMins + 120) statIn = 'Telat';
+                else statIn = 'Sangat Telat';
+
+                // --- STATUS OUT LOGIC ---
+                let statOut = '-';
+                if (coutMins === null) statOut = 'Plg Awal';
+                else if (shiftOutMins - coutMins >= 121) statOut = 'Plg Awal';
+                else if (shiftOutMins - coutMins >= 1) statOut = 'Plg Cepat';
+                else if (coutMins - shiftOutMins >= 90) statOut = 'Lembur'; 
+                else statOut = 'Plg Normal';
+
+                let finalKet = rawRecord?.note || '';
+                let uangMakan = Number(emp.tMakan) || 0;
+                let uangLembur = 0;
+
+                // --- APPLY KETERANGAN & REQUEST OVERRIDES ---
+                if (rawRecord?.foto || finalKet.toLowerCase().includes('selfie')) finalKet = 'Hadir-Dinas Luar';
+                else if (finalKet.toLowerCase().includes('qr')) finalKet = 'Scan QR Kantor';
+
+                if (reqData) {
+                    if (reqData.status === 'Approved') {
+                        if (reqData.jenis === 'Lembur') {
+                            if (coutMins >= shiftOutMins + 90) {
+                                statOut = 'Lembur';
+                                finalKet = 'Lembur';
+                                // Hitung uang lembur
+                                let hRate = Math.round((Number(emp.gapok) || 0) / 173);
+                                let lHours = Math.floor((coutMins - shiftOutMins) / 60);
+                                if (lHours === 1) uangLembur = hRate * 1.5;
+                                else if (lHours > 1) uangLembur = (hRate * 1.5) + ((lHours - 1) * hRate * 2);
+                            } else {
+                                statOut = 'Plg Normal'; // Minta lembur tapi pulang cepat
+                            }
+                        } else {
+                            statIn = reqData.jenis === 'Sakit' ? 'Sakit' : reqData.jenis === 'Cuti Tahunan' ? 'Cuti' : 'Izin';
+                            statOut = statIn;
+                            finalKet = `${reqData.jenis} Disetujui`;
+                            uangMakan = 0;
+                        }
+                    } else {
+                        if (reqData.jenis !== 'Lembur') {
+                            finalKet = `${reqData.jenis} Belum Disetujui`;
+                            // Tetap terhitung Alpha/Telat jika belum diapprove dan tidak absen
+                        }
+                    }
+                } else if (statOut === 'Lembur') {
+                    statOut = 'Plg Normal'; // Tanpa pengajuan, lembur tidak diakui
+                }
+
+                // --- ABSEN LOGIC (Tidak ada IN & OUT & Bukan Cuti/Sakit) ---
+                if (cinMins === null && coutMins === null && (!reqData || reqData.status !== 'Approved' || reqData.jenis === 'Lembur')) {
+                    if (isWeekend || isLibur) {
+                        // Jangan masukkan sebagai Absen jika weekend/libur
+                        curr.setDate(curr.getDate() + 1);
+                        continue;
+                    }
+                    statIn = 'Absen';
+                    statOut = 'Absen';
+                    finalKet = 'Absen';
+                    uangMakan = 0;
+                }
+
+                // Hangus uang makan jika sangat telat/absen
+                if (statIn === 'Sangat Telat' || statIn === 'Absen') uangMakan = 0;
+
+                const times = calculateTimes(shiftObj.in, shiftObj.out, cin, cout);
+
+                result.push({
+                    id: emp.id, nama: emp.nama, date: dateStr, displayDate: formatIndoDate(dateStr), day: dayName,
+                    shift: shiftDisplay, shiftClass: 'text-[#0070BA]', checkIn: cin, checkOut: cout, time: `${cin} - ${cout}`,
+                    timeClass: (cin==='-'&&cout==='-') ? 'text-rose-400' : 'text-gray-600', loc: rawRecord?.loc || '-',
+                    statusIn: statIn, statusOut: statOut, status: statIn === 'Absen' ? 'Absen' : (statIn === 'Sangat Telat' ? 'Sangat Telat' : statIn),
+                    statusClassIn: getStatusClass(statIn), statusClassOut: getStatusClass(statOut),
+                    note: finalKet, noteClass: finalKet === 'Absen' ? 'text-rose-600' : 'text-gray-500',
+                    uangMakan: uangMakan, uangLembur: uangLembur, foto: rawRecord?.foto || '', ...times
+                });
+                
+                curr.setDate(curr.getDate() + 1);
+            }
+        });
+        
+        result.sort((a,b) => new Date(b.date) - new Date(a.date));
+        return result;
     };
 
     // --- REUSABLE UI COMPONENTS ---
@@ -324,6 +454,27 @@
       </button>
     );
 
+    const PaginationControls = ({ currentPage, totalPages, onPageChange }) => {
+        if (totalPages <= 1) return null;
+        return (
+            <div className="flex justify-between items-center px-4 py-3 border-t border-black/5 dark:border-white/5 bg-white/20 dark:bg-black/20 mt-1 rounded-b-xl">
+                <span className="text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Hal {currentPage} / {totalPages}</span>
+                <div className="flex gap-2">
+                    <button className="px-3 py-1.5 rounded-lg border border-[#0070BA]/30 text-[#0070BA] dark:text-[#00F0FF] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#0070BA]/10 flex items-center" disabled={currentPage === 1} onClick={() => onPageChange(currentPage - 1)}><ChevronLeft size={16}/></button>
+                    <button className="px-3 py-1.5 rounded-lg border border-[#0070BA]/30 text-[#0070BA] dark:text-[#00F0FF] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#0070BA]/10 flex items-center" disabled={currentPage === totalPages} onClick={() => onPageChange(currentPage + 1)}><ChevronRight size={16}/></button>
+                </div>
+            </div>
+        );
+    };
+
+    const usePagination = (data, itemsPerPage = 25) => {
+        const [currentPage, setCurrentPage] = useState(1);
+        useEffect(() => { setCurrentPage(1); }, [data.length]);
+        const maxPage = Math.ceil(data.length / itemsPerPage) || 1;
+        const currentData = data.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+        return { currentData, currentPage, maxPage, setCurrentPage };
+    };
+
     const useAutoSave = (dataToWatch) => {
       const [saveStatus, setSaveStatus] = useState('idle'); 
       useEffect(() => {
@@ -350,15 +501,37 @@
       const [isDataLoaded, setIsDataLoaded] = useState(false);
       const [globalPreviewPhoto, setGlobalPreviewPhoto] = useState(null);
 
-      const [uiSettings, setUiSettings] = useState({ logo: null, background: null, companyName: 'PT. Samudra Asia Engineering', hrdName: 'Bpk. Andi Setiawan', hrdTitle: 'Head of HR & GA' });
+      const [uiSettings, setUiSettings] = useState({ logo: null, background: null, companyName: 'PT. Samudra Asia Engineering', companyAddress: 'Jl. Raya Perjuangan No. 1, Kebon Jeruk, Jakarta Barat', hrdName: 'Bpk. Andi Setiawan', hrdTitle: 'Head of HR & GA' });
       const [payrollLabels, setPayrollLabels] = useState({ gapok: 'Gaji Pokok', tMakan: 'Tunj. Uang Makan', tJabatan: 'Tunj. Jabatan', tTransport: 'Tunj. Transportasi', tThr: 'Tunj. THR', tKes: 'Tunj. Kesehatan', tLain: 'Tunj. Lain-lain', insentif: 'Insentif', pAsuransi: 'Pot. Asuransi', pBpjsKs: 'Pot. BPJS KS', pBpjstk: 'Pot. BPJSTK', pPinjam: 'Pot. Pinjaman', pAbsen: 'Pot. Absen', pLain: 'Pot. Lainnya' });
       const [globalEmployees, setGlobalEmployees] = useState([
-        { id: 'EMP01', nama: 'Budi Karyawan', jk: 'Laki-laki', phone: '0812345678', tglGabung: '2022-01-10', tmpLahir: 'Jakarta', tglLahir: '1990-05-15', ktp: '317000000000001', alamat: 'Jl. Sudirman No 1', pendidikan: 'S1', role: 'user', dept: 'IT', jabatan: 'Staff', atasan: 'Manager IT', sisaCuti: 10, gapok: 6000000, tMakan: 50000, tJabatan: 0, tTransport: 300000, tThr: 6000000, tKes: 200000, tLain: 0, insentif: 0, pAsuransi: 100000, pBpjsKs: 60000, pBpjstk: 120000, pPinjam: 0, pAbsen: 0, pLain: 0 },
+        { id: 'EMP01', nama: 'Budi Karyawan', jk: 'Laki-laki', phone: '0812345678', tglGabung: '2022-01-10', tmpLahir: 'Jakarta', tglLahir: '1990-05-15', ktp: '317000000000001', alamat: 'Jl. Sudirman No 1', pendidikan: 'S1', role: 'user', dept: 'Gudang', jabatan: 'Staff', atasan: 'Manager IT', sisaCuti: 10, gapok: 6000000, tMakan: 50000, tJabatan: 0, tTransport: 300000, tThr: 6000000, tKes: 200000, tLain: 0, insentif: 0, pAsuransi: 100000, pBpjsKs: 60000, pBpjstk: 120000, pPinjam: 0, pAbsen: 0, pLain: 0 },
         { id: 'ADMIN', nama: 'Administrator Sistem', jk: 'Laki-laki', phone: '0800000000', tglGabung: '2019-01-01', tmpLahir: 'Jakarta', tglLahir: '1990-01-01', ktp: '317000000000000', alamat: 'Kantor Pusat', pendidikan: 'S1', role: 'admin', dept: 'IT', jabatan: 'Admin', atasan: '-', sisaCuti: 12, gapok: 10000000, tMakan: 100000, tJabatan: 1000000, tTransport: 500000, tThr: 10000000, tKes: 300000, tLain: 0, insentif: 0, pAsuransi: 0, pBpjsKs: 0, pBpjstk: 0, pPinjam: 0, pAbsen: 0, pLain: 0 }
       ]);
       const [globalJabatan, setGlobalJabatan] = useState([{ id: 'J01', nama: 'Administrator', atasan: '-' }]);
-      const [globalDepartemen, setGlobalDepartemen] = useState([{ id: 'D01', nama: 'IT' }]);
-      const [globalJadwal, setGlobalJadwal] = useState([{ id: 1, dept: 'Semua Departemen', hari: 'Senin - Jumat', in: '08:00', out: '17:00' }]);
+      const [globalDepartemen, setGlobalDepartemen] = useState([
+        { id: 'D01', nama: 'Top Manajemen' },
+        { id: 'D02', nama: 'Middle Manajemen' },
+        { id: 'D03', nama: 'HRD & GA' },
+        { id: 'D04', nama: 'IT' },
+        { id: 'D05', nama: 'Finance & Admin' },
+        { id: 'D06', nama: 'Sales & Marketing' },
+        { id: 'D07', nama: 'Logistik & Transportasi' },
+        { id: 'D08', nama: 'Gudang' },
+        { id: 'D09', nama: 'Umum' },
+        { id: 'D10', nama: 'Sales & MD' }
+      ]);
+      const [globalJadwal, setGlobalJadwal] = useState([
+        { id: 1, dept: 'Top Manajemen', hari: 'Senin - Jumat', in: '09:00', out: '16:00' },
+        { id: 2, dept: 'Middle Manajemen', hari: 'Senin - Jumat', in: '08:00', out: '17:00' },
+        { id: 3, dept: 'HRD & GA', hari: 'Senin - Jumat', in: '08:00', out: '17:00' },
+        { id: 4, dept: 'IT', hari: 'Senin - Jumat', in: '08:00', out: '17:00' },
+        { id: 5, dept: 'Finance & Admin', hari: 'Senin - Jumat', in: '08:00', out: '17:00' },
+        { id: 6, dept: 'Sales & Marketing', hari: 'Senin - Jumat', in: '08:00', out: '17:00' },
+        { id: 7, dept: 'Logistik & Transportasi', hari: 'Senin - Jumat', in: '07:30', out: '16:30' },
+        { id: 8, dept: 'Gudang', hari: 'Senin - Jumat', in: '07:30', out: '16:30' },
+        { id: 9, dept: 'Umum', hari: 'Senin - Jumat', in: '07:30', out: '16:30' },
+        { id: 10, dept: 'Sales & MD', hari: 'Senin - Jumat', in: '07:30', out: '16:30' }
+      ]);
       const [globalUangMakan, setGlobalUangMakan] = useState({ toleransi: 10, potTelat: 50, potAbsen: '(Gaji Pokok / 30 Hari) * Jml Absen', hangus: 15, keterangan: 'Check-in > toleransi dipotong %. Check-in > hangus atau status Sakit/Absen/Cuti = 0.' });
       const [globalAttendancePolicy, setGlobalAttendancePolicy] = useState({ maxCheckInEarly: 240, minCheckOutEarly: 299, lemburStart: 90 });
       const [globalLembur, setGlobalLembur] = useState([{ id: 1, rule: 'Mulai Hitung', formula: '90 Menit Pasca Pulang' }]);
@@ -400,9 +573,6 @@
               }
 
               if (d.absen && d.absen.length > 0) {
-                 const currUangMakan = (d.setting && d.setting.globalUangMakan) || globalUangMakan;
-                 
-                 // Deduplikasi: Ambil checkIn pertama dalam satu hari untuk setiap karyawan
                  const uniqueAbsenMap = new Map();
                  d.absen.forEach(a => {
                      let rawDate = a.date || a.tanggal || '';
@@ -421,82 +591,17 @@
                              validDateStr = dObj.getFullYear() + '-' + String(dObj.getMonth() + 1).padStart(2, '0') + '-' + String(dObj.getDate()).padStart(2, '0');
                          } else { validDateStr = String(rawDate).split('T')[0]; }
                      }
-                     a.normalizedDate = validDateStr;
+                     a.date = validDateStr;
 
-                     const key = a.id + "_" + validDateStr;
-                     if(!uniqueAbsenMap.has(key)) {
-                         uniqueAbsenMap.set(key, a);
-                     } else {
+                     const key = `${String(a.id).toUpperCase()}_${validDateStr}`;
+                     if(!uniqueAbsenMap.has(key)) uniqueAbsenMap.set(key, a);
+                     else {
                          const existing = uniqueAbsenMap.get(key);
-                         const t1 = new Date(`1970/01/01 ${existing.checkIn || '23:59:59'}`);
-                         const t2 = new Date(`1970/01/01 ${a.checkIn || '23:59:59'}`);
-                         if (t2 < t1) uniqueAbsenMap.set(key, a);
+                         if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') existing.checkOut = a.checkOut;
+                         if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') existing.checkIn = a.checkIn;
                      }
                  });
-
-                 const processedAbsen = Array.from(uniqueAbsenMap.values()).map(a => {
-                    let sClass = 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30'; 
-                    if (a.status === 'TELAT' || a.status === 'PULANG AWAL') sClass = 'text-amber-600 bg-amber-100 border-amber-300';
-                    if (a.status === 'ABSEN' || a.status === 'SANGAT TELAT') sClass = 'text-rose-600 bg-rose-100 border-rose-300';
-                    if (a.status === 'LEMBUR' || a.status === 'CUTI') sClass = 'text-purple-600 bg-purple-100 border-purple-300';
-                    if (a.status === 'SANGAT HADIR' || a.status === 'NORMAL') sClass = 'text-emerald-600 bg-emerald-100 border-emerald-300';
-                    
-                    let validDateStr = a.normalizedDate; 
-                    let displayStr = formatIndoDate(validDateStr);
-                    let dayName = a.day || a.hari || '-';
-                    if(validDateStr) {
-                        const dObj = new Date(validDateStr);
-                        if (!isNaN(dObj.getTime())) {
-                            const daysIndo = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-                            dayName = daysIndo[dObj.getDay()];
-                        }
-                    }
-
-                    const rIn = cleanTimeStr(a.checkIn || a.in);
-                    const rOut = cleanTimeStr(a.checkOut || a.out);
-                    const shiftVal = a.shift || '08:00 - 17:00';
-                    const times = calculateTimes(shiftVal, rIn, rOut);
-                    
-                    const emp = (d.karyawan || []).find(e => String(e.id).toUpperCase() === String(a.id).toUpperCase()) || {};
-                    
-                    let uangMakanHarian = Number(emp.tMakan) || 0; 
-                    let uangMakanDiterima = uangMakanHarian;
-                    const lowerStatus = (a.status || '').toLowerCase();
-                    const bToleransi = Number(currUangMakan.toleransi) || 10;
-                    const bHangus = Number(currUangMakan.hangus) || 15;
-                    const bPotTelat = Number(currUangMakan.potTelat) || 50;
-
-                    if (lowerStatus.includes('sakit') || lowerStatus.includes('izin') || lowerStatus.includes('cuti') || lowerStatus.includes('absen') || lowerStatus.includes('alfa') || !a.checkIn || a.checkIn === '-') { 
-                        uangMakanDiterima = 0; 
-                    } else if (times.telatMins > bHangus) { 
-                        uangMakanDiterima = 0; 
-                    } else if (times.telatMins > bToleransi) { 
-                        uangMakanDiterima = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100)); 
-                    }
-
-                    let uangLemburVal = 0; let lemburDis = '-';
-                    const relatedReq = (d.pengajuan || []).find(req => req.id === a.id && new Date(req.tglMulai) <= new Date(validDateStr) && new Date(req.tglSelesai) >= new Date(validDateStr));
-                    const isLemburApproved = relatedReq && relatedReq.jenis.toLowerCase() === 'lembur' && relatedReq.status === 'Approved';
-
-                    if (isLemburApproved && times.lemburMins >= 90) {
-                        let hourlyRate = Math.round((Number(emp.gapok) || 0) / 173);
-                        let lemburHours = Math.floor(times.lemburMins / 60);
-                        if (lemburHours === 1) uangLemburVal = hourlyRate * 1.5;
-                        else if (lemburHours > 1) uangLemburVal = (hourlyRate * 1.5) + ((lemburHours - 1) * hourlyRate * 2);
-                        lemburDis = times.lembur; 
-                        a.status = 'LEMBUR'; sClass = 'text-purple-600 bg-purple-100 border-purple-300';
-                    } else {
-                        if (a.status === 'LEMBUR') { a.status = 'HADIR'; sClass = 'text-[#0070BA] bg-[#0070BA]/10 border-[#0070BA]/30'; }
-                    }
-
-                    return { 
-                       ...a, date: validDateStr, displayDate: displayStr, day: dayName,
-                       time: `${rIn} - ${rOut}`, checkIn: rIn, checkOut: rOut, shift: shiftVal, shiftClass: 'text-[#0070BA]', 
-                       timeClass: 'text-gray-600', statusClass: sClass, statusIn: (rIn === '-' ? 'Sangat Telat' : a.status) || '-', statusOut: (rOut === '-' ? 'Plg Awal' : a.status) || '-', statusClassIn: (rIn === '-' ? getStatusClass('Sangat Telat') : sClass), statusClassOut: (rOut === '-' ? getStatusClass('Plg Awal') : sClass), note: a.keterangan || a.note || '', noteClass: 'text-gray-400',
-                       uangMakan: uangMakanDiterima, uangLembur: uangLemburVal, ...times, lembur: lemburDis
-                    };
-                 });
-                 setGlobalAttendance(processedAbsen);
+                 setGlobalAttendance(Array.from(uniqueAbsenMap.values()));
               }
 
               if (d.jabatan !== undefined) setGlobalJabatan(d.jabatan);
@@ -511,47 +616,24 @@
         fetchInitialData();
       }, []);
 
+      const sendDataToSheet = async (data) => {
+        try {
+          const response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(data), redirect: 'follow' });
+          return await response.json();
+        } catch (error) {
+          if (data.action === 'login') {
+            let role = 'user'; let pw = data.password; let user = data.username.toLowerCase();
+            if(user === 'admin' && pw === 'iaf2026') role = 'admin'; else if(user === 'top' && pw === 'iaf2026') role = 'top'; else if(user === 'manager' && pw === 'iaf2026') role = 'manager'; else if(user === 'spv' && pw === user) role = 'supervisor'; else if(user === pw) role = 'user'; else throw new Error("Kredensial tidak sesuai master data!");
+            return { status: 'success', user: { id: data.username.toUpperCase(), name: data.username.toUpperCase(), dept: 'Departemen Terkait', role: role } };
+          }
+          return { status: 'success', message: 'Tersimpan (Offline Mode)' };
+        }
+      };
+
       const handleApprovalDecision = (reqIndex, decision) => {
           const updatedReqs = [...globalRequests]; updatedReqs[reqIndex].status = decision; setGlobalRequests(updatedReqs);
           const syncApproval = async () => { await sendDataToSheet({ action: 'UPDATE_PENGAJUAN', data: updatedReqs[reqIndex] }); await sendDataToSheet({ action: 'SYNC_ACC', data: updatedReqs.filter(r => r.status !== 'Pending') }); }
           syncApproval();
-
-          if (decision === 'Approved') {
-              const req = updatedReqs[reqIndex]; const newAttendance = [...globalAttendance];
-              let status = 'IZIN'; let statusClass = 'text-rose-600 bg-rose-100 border-rose-300'; let hours = 0; let time = '- - -';
-              if (req.jenis === 'Sakit') { status = 'SAKIT'; statusClass = 'text-amber-600 bg-amber-100 border-amber-300'; }
-              else if (req.jenis === 'Cuti Tahunan') { status = 'CUTI'; statusClass = 'text-purple-600 bg-purple-100 border-purple-300'; }
-              else if (req.jenis === 'Lembur') { status = 'LEMBUR'; statusClass = 'text-purple-600 bg-purple-100 border-purple-300'; hours = 11.5; time = '08:00:00 - 19:30:00'; }
-
-              let currentDate = new Date(req.tglMulai); const endDate = new Date(req.tglSelesai);
-              while(currentDate <= endDate) {
-                 const dateStr = currentDate.toISOString().split('T')[0];
-                 const existingIdx = newAttendance.findIndex(a => a.id === req.id && a.date === dateStr);
-                 
-                 let rIn = '-'; let rOut = '-'; let tTime = '- - -';
-                 if(existingIdx > -1) {
-                     rIn = newAttendance[existingIdx].checkIn; rOut = newAttendance[existingIdx].checkOut; tTime = newAttendance[existingIdx].time;
-                 } else if (status === 'LEMBUR') {
-                     rIn = '08:00:00'; rOut = '19:30:00'; tTime = '08:00:00 - 19:30:00';
-                 }
-                 
-                 const times = calculateTimes('08:00 - 17:00', rIn, rOut);
-                 
-                 let lemburVal = 0;
-                 if(status === 'LEMBUR' && times.lemburMins >= 90) {
-                     const emp = globalEmployees.find(e => e.id === req.id) || {};
-                     let hourlyRate = Math.round((Number(emp.gapok) || 0) / 173);
-                     let lemburHours = Math.floor(times.lemburMins / 60);
-                     if (lemburHours === 1) lemburVal = hourlyRate * 1.5;
-                     else if (lemburHours > 1) lemburVal = (hourlyRate * 1.5) + ((lemburHours - 1) * hourlyRate * 2);
-                 }
-
-                 const record = { id: req.id, nama: req.nama, date: dateStr, displayDate: formatIndoDate(dateStr), day: currentDate.toLocaleDateString('id-ID', {weekday: 'long'}), shift: '08:00 - 17:00', shiftClass: 'text-gray-400', checkIn: rIn, checkOut: rOut, time: tTime, timeClass: 'text-gray-400', loc: status === 'IZIN' || status === 'SAKIT' || status === 'CUTI' ? '-' : 'Kantor Pusat', status: status, statusIn: status, statusOut: status, statusClass: statusClass, statusClassIn: statusClass, statusClassOut: statusClass, note: req.jenis + ' (Disetujui)', noteClass: 'text-[#0070BA]', hours: hours, foto: '', uangMakan: 0, uangLembur: lemburVal, ...times };
-                 if(existingIdx > -1) newAttendance[existingIdx] = record; else newAttendance.push(record);
-                 currentDate.setDate(currentDate.getDate() + 1);
-              }
-              newAttendance.sort((a,b) => new Date(a.date) - new Date(b.date)); setGlobalAttendance(newAttendance);
-          }
       };
 
       const handleUpdateReq = (updatedReq) => { sendDataToSheet({ action: 'UPDATE_PENGAJUAN', data: updatedReq }); };
@@ -591,68 +673,28 @@
           <div className="relative z-10 w-full h-full min-h-screen">
             {currentScreen === 'login' ? <LoginScreen onLogin={handleLogin} uiSettings={uiSettings} isDataLoaded={isDataLoaded} /> : (
               <AppLayout user={user} role={role} currentScreen={currentScreen} setCurrentScreen={setCurrentScreen} isDarkMode={isDarkMode} toggleTheme={() => setIsDarkMode(!isDarkMode)} onLogout={handleLogout} activeSettingTab={activeSettingTab} setActiveSettingTab={setActiveSettingTab} activeReportTab={activeReportTab} setActiveReportTab={setActiveReportTab} uiSettings={uiSettings}>
-                {currentScreen === 'dashboard' && <DashboardScreen user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
-                {currentScreen === 'attendance' && <AttendanceScreen user={user} attendancePolicy={globalAttendancePolicy} onBack={() => setCurrentScreen('dashboard')} onRecordAbsen={(newAbsenPayload) => {
+                {currentScreen === 'dashboard' && <DashboardScreen user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} globalJadwal={globalJadwal} setGlobalPreviewPhoto={setGlobalPreviewPhoto} globalLibur={globalLibur} globalCutiBersama={globalCutiBersama} />}
+                {currentScreen === 'attendance' && <AttendanceScreen user={user} globalAttendance={globalAttendance} globalJadwal={globalJadwal} globalEmployees={globalEmployees} onBack={() => setCurrentScreen('dashboard')} onRecordAbsen={(newAbsenPayload) => {
                   const updatedAttendance = [...globalAttendance];
-                  const existingIdx = updatedAttendance.findIndex(a => a.id === newAbsenPayload.id && a.date === newAbsenPayload.date);
-                  const times = calculateTimes(newAbsenPayload.shift, newAbsenPayload.checkIn, newAbsenPayload.checkOut);
-                  const empInfo = globalEmployees.find(e => e.id === newAbsenPayload.id) || {};
-                  let uangMakanHarian = Number(empInfo.tMakan) || 0;
-                  let uangMakanDiterima = uangMakanHarian;
-                  const lowerStatus = (newAbsenPayload.status || '').toLowerCase();
-                  const bToleransi = Number(globalUangMakan.toleransi) || 10;
-                  const bHangus = Number(globalUangMakan.hangus) || 15;
-                  const bPotTelat = Number(globalUangMakan.potTelat) || 50;
-
-                  if (lowerStatus.includes('sakit') || lowerStatus.includes('izin') || lowerStatus.includes('cuti') || lowerStatus.includes('absen') || lowerStatus.includes('alfa') || !newAbsenPayload.checkIn || newAbsenPayload.checkIn === '-') {
-                      uangMakanDiterima = 0;
-                  } else if (times.telatMins > bHangus) {
-                      uangMakanDiterima = 0;
-                  } else if (times.telatMins > bToleransi) {
-                      uangMakanDiterima = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100));
-                  }
-
-                  const statusClassIn = getStatusClass(newAbsenPayload.type === 'IN' ? newAbsenPayload.status : existingIdx > -1 ? updatedAttendance[existingIdx].statusIn : '-');
-                  const statusClassOut = getStatusClass(newAbsenPayload.type === 'OUT' ? newAbsenPayload.status : existingIdx > -1 ? updatedAttendance[existingIdx].statusOut : '-');
-
-                  if (newAbsenPayload.type === 'IN') {
-                      if (existingIdx === -1) {
-                          const finalStatusIn = newAbsenPayload.checkIn && newAbsenPayload.checkIn !== '-' ? newAbsenPayload.status : 'Sangat Telat';
-                          updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `${cleanTimeStr(newAbsenPayload.checkIn)} - -`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', status: finalStatusIn, statusIn: finalStatusIn, statusOut: '-', statusClass: getStatusClass(finalStatusIn), statusClassIn: getStatusClass(finalStatusIn), statusClassOut: 'text-gray-400 bg-gray-100 border-gray-200', note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: uangMakanDiterima, ...times });
+                  const existingIdx = updatedAttendance.findIndex(a => String(a.id).toUpperCase() === String(newAbsenPayload.id).toUpperCase() && a.date === newAbsenPayload.date);
+                  
+                  if (existingIdx > -1) {
+                      const existing = updatedAttendance[existingIdx];
+                      existing.checkIn = newAbsenPayload.checkIn && newAbsenPayload.checkIn !== '-' ? newAbsenPayload.checkIn : existing.checkIn;
+                      existing.checkOut = newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' ? newAbsenPayload.checkOut : existing.checkOut;
+                      if (newAbsenPayload.keterangan && !String(existing.note).includes(newAbsenPayload.keterangan)) {
+                          existing.note = existing.note ? `${existing.note} & ${newAbsenPayload.keterangan}` : newAbsenPayload.keterangan;
                       }
+                      existing.foto = newAbsenPayload.foto || existing.foto;
                   } else {
-                     if (existingIdx > -1) {
-                         const finalStatusOut = newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' ? newAbsenPayload.status : 'Plg Awal';
-                         updatedAttendance[existingIdx].checkOut = newAbsenPayload.checkOut;
-                         updatedAttendance[existingIdx].time = `${cleanTimeStr(updatedAttendance[existingIdx].checkIn)} - ${cleanTimeStr(newAbsenPayload.checkOut)}`;
-                         updatedAttendance[existingIdx].statusOut = finalStatusOut;
-                         updatedAttendance[existingIdx].statusClassOut = getStatusClass(finalStatusOut);
-                         updatedAttendance[existingIdx].status = updatedAttendance[existingIdx].statusIn || finalStatusOut;
-                         updatedAttendance[existingIdx].note = updatedAttendance[existingIdx].note !== newAbsenPayload.keterangan ? updatedAttendance[existingIdx].note + " & " + newAbsenPayload.keterangan : newAbsenPayload.keterangan;
-                         
-                         const newTimes = calculateTimes(newAbsenPayload.shift, updatedAttendance[existingIdx].checkIn, newAbsenPayload.checkOut);
-                         
-                         let finalUangMakan = uangMakanHarian;
-                         const finalStatus = (finalStatusOut || '').toLowerCase();
-                         if (finalStatus.includes('sakit') || finalStatus.includes('izin') || finalStatus.includes('cuti') || finalStatus.includes('absen') || finalStatus.includes('alfa') || finalStatus.includes('plg awal') || !updatedAttendance[existingIdx].checkIn || updatedAttendance[existingIdx].checkIn === '-') {
-                             finalUangMakan = 0;
-                         } else if (newTimes.telatMins > bHangus) {
-                             finalUangMakan = 0;
-                         } else if (newTimes.telatMins > bToleransi) {
-                             finalUangMakan = Math.round(uangMakanHarian * ((100 - bPotTelat) / 100));
-                         }
-                         
-                         updatedAttendance[existingIdx].uangMakan = finalUangMakan;
-                         Object.assign(updatedAttendance[existingIdx], newTimes);
-                     } else {
-                         const finalStatusOut = newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' ? newAbsenPayload.status : 'Plg Awal';
-                         updatedAttendance.push({ ...newAbsenPayload, displayDate: formatIndoDate(newAbsenPayload.date), time: `- - ${cleanTimeStr(newAbsenPayload.checkOut)}`, shiftClass: 'text-[#0070BA]', timeClass: 'text-gray-600', status: finalStatusOut, statusIn: '-', statusOut: finalStatusOut, statusClass: getStatusClass(finalStatusOut), statusClassIn: 'text-gray-400 bg-gray-100 border-gray-200', statusClassOut: getStatusClass(finalStatusOut), note: newAbsenPayload.keterangan, noteClass: 'text-gray-400', uangLembur: 0, uangMakan: 0, ...times });
-                     }
+                      updatedAttendance.push(newAbsenPayload);
                   }
-                  setGlobalAttendance(updatedAttendance); sendDataToSheet({ action: 'RECORD_ABSEN', data: newAbsenPayload });
+                  
+                  setGlobalAttendance(updatedAttendance); 
+                  sendDataToSheet({ action: existingIdx > -1 ? 'UPDATE_ABSEN' : 'RECORD_ABSEN', data: newAbsenPayload });
                 }} />}
                 {currentScreen === 'leave' && <LeaveFormScreen user={user} onSubmitLeave={(newReq) => { setGlobalRequests([...globalRequests, newReq]); sendDataToSheet({ action: 'RECORD_PENGAJUAN', data: newReq }); }} />}
-                {currentScreen === 'reports' && <ReportsScreen role={role} user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} uiSettings={uiSettings} payrollLabels={payrollLabels} activeTab={activeReportTab} setActiveTab={setActiveReportTab} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
+                {currentScreen === 'reports' && <ReportsScreen role={role} user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} globalJadwal={globalJadwal} uiSettings={uiSettings} payrollLabels={payrollLabels} activeTab={activeReportTab} setActiveTab={setActiveReportTab} setGlobalPreviewPhoto={setGlobalPreviewPhoto} globalLibur={globalLibur} globalCutiBersama={globalCutiBersama} />}
                 {currentScreen === 'settings' && <SettingsScreen role={role} activeTab={activeSettingTab} setActiveTab={setActiveSettingTab} globalRequests={globalRequests} setGlobalRequests={setGlobalRequests} onApprovalDecision={handleApprovalDecision} onDeleteRequest={handleDeleteRequest} onUpdateReq={handleUpdateReq} uiSettings={uiSettings} setUiSettings={setUiSettings} globalEmployees={globalEmployees} setGlobalEmployees={setGlobalEmployees} globalJabatan={globalJabatan} setGlobalJabatan={setGlobalJabatan} globalDepartemen={globalDepartemen} setGlobalDepartemen={setGlobalDepartemen} payrollLabels={payrollLabels} setPayrollLabels={setPayrollLabels} globalJadwal={globalJadwal} setGlobalJadwal={setGlobalJadwal} globalUangMakan={globalUangMakan} setGlobalUangMakan={setGlobalUangMakan} globalAttendancePolicy={globalAttendancePolicy} setGlobalAttendancePolicy={setGlobalAttendancePolicy} globalLembur={globalLembur} setGlobalLembur={setGlobalLembur} globalLibur={globalLibur} setGlobalLibur={setGlobalLibur} globalKebijakanCuti={globalKebijakanCuti} setGlobalKebijakanCuti={setGlobalKebijakanCuti} globalCutiBersama={globalCutiBersama} setGlobalCutiBersama={setGlobalCutiBersama} globalMatrixData={globalMatrixData} setGlobalMatrixData={setGlobalMatrixData} globalPassData={globalPassData} setGlobalPassData={setGlobalPassData} setGlobalPreviewPhoto={setGlobalPreviewPhoto} />}
               </AppLayout>
             )}
@@ -731,7 +773,7 @@
         { id: 'dashboard', label: 'Dashboard', icon: Home, roles: ['all'] }, 
         { id: 'attendance', label: 'Absensi', icon: ScanLine, roles: ['all'] }, 
         { id: 'leave', label: 'Pengajuan Izin', icon: FileText, roles: ['all'] }, 
-        { id: 'reports', label: 'Laporan Data', icon: BarChart2, roles: ['all'] }, 
+        { id: 'reports', label: 'Laporan', icon: BarChart2, roles: ['all'] }, 
         { id: 'settings', label: 'Pengaturan', icon: Settings, roles: ['all'] } 
       ].filter(m => m.roles.includes('all') || m.roles.includes(role));
       
@@ -790,44 +832,66 @@
       );
     }
 
-    function DashboardScreen({ user, globalAttendance, globalRequests, globalEmployees, setGlobalPreviewPhoto }) {
+    function DashboardScreen({ user, globalAttendance, globalRequests, globalEmployees, globalJadwal, setGlobalPreviewPhoto, globalLibur, globalCutiBersama }) {
       const [time, setTime] = useState(new Date());
-      const [startDate, setStartDate] = useState(''); const [endDate, setEndDate] = useState('');
+      
+      const getDefaultPeriod = () => {
+          const t = new Date(); let sm = t.getMonth(); let sy = t.getFullYear(); let em = t.getMonth(); let ey = t.getFullYear();
+          if (t.getDate() > 20) { em = sm + 1; if (em > 11) { em = 0; ey++; } } 
+          else { sm = em - 1; if (sm < 0) { sm = 11; sy--; } }
+          const p = (n) => String(n).padStart(2, '0');
+          return { s: `${sy}-${p(sm + 1)}-21`, e: `${ey}-${p(em + 1)}-20` };
+      };
+      const [startDate, setStartDate] = useState(getDefaultPeriod().s); 
+      const [endDate, setEndDate] = useState(getDefaultPeriod().e);
 
       useEffect(() => { 
-        const today = new Date(); const dayOfWeek = today.getDay() || 7; 
-        const monday = new Date(today); monday.setDate(today.getDate() - dayOfWeek + 1);
-        const saturday = new Date(monday); saturday.setDate(monday.getDate() + 5);
-        setStartDate(monday.toISOString().split('T')[0]); setEndDate(saturday.toISOString().split('T')[0]);
         const timer = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(timer); 
       }, []);
 
-      const filteredData = globalAttendance.filter(item => {
-        if (String(item.id).toUpperCase() !== String(user?.id).toUpperCase()) return false;
-        if (!startDate && !endDate) return true;
-        const itemDate = new Date(item.date); const start = startDate ? new Date(startDate) : new Date(-8640000000000000); const end = endDate ? new Date(endDate) : new Date(8640000000000000);
-        return itemDate >= start && itemDate <= end;
-      });
+      const completeData = useMemo(() => {
+           return buildCompleteAttendanceView(globalAttendance, globalEmployees, globalRequests, globalJadwal, globalLibur, globalCutiBersama, startDate, endDate, user?.id);
+      }, [globalAttendance, globalEmployees, globalRequests, globalJadwal, globalLibur, globalCutiBersama, startDate, endDate, user]);
 
-      const totalHadir = filteredData.filter(d => d.checkIn && d.checkIn !== '-').length;
-      const totalTelat = filteredData.filter(d => d.telatMins > 0).length;
-      const totalSakit = filteredData.filter(d => d.status === 'SAKIT').length;
-      const sisaCuti = (user?.sisaCuti !== undefined ? user.sisaCuti : 12) - filteredData.filter(d => d.status === 'CUTI').length; 
+      let tHadir = 0, tTelat = 0, tAbsen = 0, tSakit = 0, tCuti = 0;
+      const areaChartData = [];
       
-      const pieData = [{ name: 'Hadir', value: totalHadir, color: COLORS.hadir }, { name: 'Telat', value: totalTelat, color: COLORS.telat }, { name: 'Sakit', value: totalSakit, color: COLORS.absen }].filter(d => d.value > 0); 
-      const hadirPercentage = filteredData.length > 0 ? Math.round(((totalHadir) / filteredData.length) * 100) : 0;
+      const ascendingData = [...completeData].sort((a,b) => new Date(a.date) - new Date(b.date));
+      ascendingData.forEach(record => {
+           const dayDate = record.date.split('-')[2];
+           let jamIn = null;
+           
+           if (record.checkIn && record.checkIn !== '-') {
+               const parts = record.checkIn.split(':');
+               if (parts.length >= 2) jamIn = parseInt(parts[0], 10) + (parseInt(parts[1], 10) / 60);
+           }
 
-      const chartDataMap = { 'Senin': null, 'Selasa': null, 'Rabu': null, 'Kamis': null, 'Jumat': null, 'Sabtu': null };
-      filteredData.forEach(d => { 
-          if(chartDataMap[d.day] !== undefined && d.checkIn && d.checkIn !== '-') { 
-              const parts = d.checkIn.split(':');
-              if(parts.length >= 2) {
-                  const hh = parseInt(parts[0], 10); const mm = parseInt(parts[1], 10);
-                  chartDataMap[d.day] = hh + (mm / 60); 
-              }
-          } 
+           if (record.status === 'Absen') tAbsen++;
+           else if (record.status === 'Sakit') tSakit++;
+           else if (record.status === 'Cuti') tCuti++;
+           else if (record.checkIn && record.checkIn !== '-') {
+               tHadir++;
+               if (['Telat', 'Sangat Telat', 'Diluar Batas'].includes(record.statusIn)) tTelat++;
+           } else if (['Normal', 'Telat', 'Sangat Telat', 'Lembur', 'Plg Awal', 'Plg Cepat'].includes(record.status)) {
+               tHadir++;
+           }
+           
+           areaChartData.push({ name: dayDate.toString(), Jam: jamIn, fullDate: record.date });
       });
-      const areaChartData = Object.keys(chartDataMap).map(k => ({ name: k.substring(0,3), Jam: chartDataMap[k] }));
+
+      const { currentData: paginatedData, currentPage, maxPage, setCurrentPage } = usePagination(completeData, 25);
+
+      const totalHariKerja = tHadir + tAbsen + tSakit + tCuti;
+      const hadirPercentage = totalHariKerja > 0 ? Math.round((tHadir / totalHariKerja) * 100) : 0;
+      const sisaCuti = (user?.sisaCuti !== undefined ? user.sisaCuti : 12) - tCuti; 
+
+      const pieData = [
+        { name: 'Hadir Tepat', value: Math.max(0, tHadir - tTelat), color: COLORS.hadir },
+        { name: 'Telat', value: tTelat, color: COLORS.telat },
+        { name: 'Absen', value: tAbsen, color: COLORS.absen },
+        { name: 'Sakit', value: tSakit, color: COLORS.purple },
+        { name: 'Cuti', value: tCuti, color: COLORS.orange }
+      ].filter(d => d.value > 0);
 
       const formatTimeDots = (date) => formatTime(date);
       const formatLongDate = (date) => {
@@ -838,7 +902,13 @@
 
       const formatTooltip = (val) => { if(val === null || val === undefined) return '-'; const h = Math.floor(val); const m = Math.round((val - h) * 60); return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
 
-      const dashStats = [ { l: 'Kehadiran', v: totalHadir.toString(), u: 'HARI', ic: CheckCircle, c: '#0070BA' }, { l: 'Terlambat', v: totalTelat.toString(), u: 'KALI', ic: Clock, c: '#D97706' }, { l: 'Sakit', v: totalSakit.toString(), u: 'HARI', ic: FileText, c: '#7E22CE' }, { l: 'Sisa Cuti', v: sisaCuti.toString(), u: 'HARI', ic: Calendar, c: '#BE123C' }];
+      const dashStats = [ 
+         { l: 'Kehadiran', v: tHadir.toString(), u: 'HARI', ic: CheckCircle, c: '#0070BA' }, 
+         { l: 'Terlambat', v: tTelat.toString(), u: 'KALI', ic: Clock, c: '#D97706' }, 
+         { l: 'Tnp Keterangan', v: tAbsen.toString(), u: 'HARI', ic: AlertTriangle, c: '#E11D48' }, 
+         { l: 'Sakit', v: tSakit.toString(), u: 'HARI', ic: FileText, c: '#7E22CE' }, 
+         { l: 'Sisa Cuti', v: sisaCuti.toString(), u: 'HARI', ic: Calendar, c: '#BE123C' }
+      ];
 
       return (
         <div className="space-y-4 md:space-y-6 animate-fade-in-up">
@@ -854,9 +924,9 @@
               </div>
             </div>
           </div>
-          <div className="flex gap-2 w-full overflow-x-auto custom-scrollbar pb-2 md:grid md:grid-cols-4 md:gap-5">
+          <div className="flex gap-2 w-full overflow-x-auto custom-scrollbar pb-2 md:grid md:grid-cols-5 md:gap-4">
             {dashStats.map((stat, i) => (
-              <GlassCard key={i} className="p-3 md:p-4 flex flex-col items-center justify-center text-center min-w-[80px] flex-1 shrink-0"><div className="p-2 md:p-3 rounded-lg md:rounded-xl bg-white/60 dark:bg-[#0A1128] border border-white/40 dark:border-white/5 shadow-sm mb-1.5 md:mb-3"><stat.ic className="w-5 h-5 md:w-[22px] md:h-[22px]" style={{ color: stat.c }} /></div><div className="flex items-baseline justify-center gap-0.5 md:gap-1 w-full"><h3 className="text-lg md:text-2xl font-black text-[#134E4A] dark:text-white leading-none text-center">{stat.v}</h3><span className="hidden md:inline text-[10px] font-bold text-gray-500">{stat.u}</span></div><p className="text-[7px] md:text-[9px] font-bold text-[#0070BA] dark:text-gray-400 uppercase tracking-widest mt-0.5 md:mt-1 truncate w-full px-0.5">{stat.l}</p></GlassCard>
+              <GlassCard key={i} className="p-3 flex flex-col items-center justify-center text-center min-w-[70px] flex-1 shrink-0"><div className="p-1.5 md:p-2 rounded-lg bg-white/60 dark:bg-[#0A1128] border border-white/40 dark:border-white/5 shadow-sm mb-1.5"><stat.ic className="w-4 h-4 md:w-5 md:h-5" style={{ color: stat.c }} /></div><div className="flex items-baseline justify-center gap-0.5 w-full"><h3 className="text-base md:text-xl font-black text-[#134E4A] dark:text-white leading-none text-center">{stat.v}</h3><span className="hidden md:inline text-[8px] md:text-[9px] font-bold text-gray-500">{stat.u}</span></div><p className="text-[6.5px] md:text-[8px] font-bold text-[#0070BA] dark:text-gray-400 uppercase tracking-widest mt-1 truncate w-full px-0.5">{stat.l}</p></GlassCard>
             ))}
           </div>
           <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-white/50 dark:bg-[#0A1128]/80 p-3 md:p-5 rounded-[1.5rem] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 shadow-sm backdrop-blur-xl">
@@ -877,17 +947,17 @@
             </GlassCard>
             <GlassCard className="p-5 lg:col-span-2">
               <h3 className="text-[10px] md:text-xs font-black tracking-widest uppercase text-[#134E4A] dark:text-white mb-4 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#B026FF] animate-pulse"></div> Trend Kehadiran</h3>
-              <div className="h-[220px] w-full"><ResponsiveContainer><AreaChart data={areaChartData} margin={{ left: -20, top: 10 }}><CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold'}} dy={10} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold'}} domain={[6, 12]} tickFormatter={formatTooltip} /><RechartsTooltip formatter={(value) => [formatTooltip(value), 'Check In']} /><Area type="monotone" dataKey="Jam" stroke="#0070BA" strokeWidth={4} fill="#0070BA22" activeDot={{ r: 6 }} connectNulls={true} /></AreaChart></ResponsiveContainer></div>
+              <div className="h-[220px] w-full"><ResponsiveContainer><AreaChart data={areaChartData} margin={{ left: -20, top: 10 }}><CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold'}} dy={10} /><YAxis domain={[5, 23]} ticks={[5, 7, 9, 11, 13, 15, 17, 19, 21, 23]} axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold'}} tickFormatter={formatTooltip} /><RechartsTooltip formatter={(value) => [formatTooltip(value), 'Check In']} labelFormatter={(label) => 'Tanggal ' + label} /><Area type="monotone" dataKey="Jam" stroke="#0070BA" strokeWidth={4} fill="#0070BA22" activeDot={{ r: 6 }} connectNulls={true} /></AreaChart></ResponsiveContainer></div>
             </GlassCard>
           </div>
-          <GlassCard className="p-5 md:p-6">
+          <GlassCard className="p-5 md:p-6 pb-2">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3 border-b border-[#0070BA]/10 dark:border-white/10 pb-3"><h3 className="text-[10px] md:text-xs font-black tracking-widest uppercase text-[#134E4A] dark:text-white flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#0070BA] dark:bg-[#00F0FF]"></div> Ringkasan Absensi</h3></div>
-            <div className="overflow-x-auto w-full rounded-xl border border-[#0070BA]/10 dark:border-white/5 custom-scrollbar">
+            <div className="overflow-x-auto w-full rounded-t-xl border border-b-0 border-[#0070BA]/10 dark:border-white/5 custom-scrollbar">
               <table className="w-full text-left border-collapse whitespace-nowrap min-w-[800px]">
                 <thead><tr className="bg-white/40 dark:bg-[#0A1128] text-[9px] md:text-[10px] text-[#0070BA] dark:text-[#00F0FF] font-bold uppercase tracking-[0.15em]"><th className="p-3 md:p-4">Tanggal</th><th className="p-3 md:p-4">Hari</th><th className="p-3 md:p-4">Nama Karyawan</th><th className="p-3 md:p-4">Departemen</th><th className="p-3 md:p-4">Jabatan</th><th className="p-3 md:p-4">Jam Kerja</th><th className="p-3 md:p-4 text-center">In / Out</th><th className="p-3 md:p-4">Lokasi</th><th className="p-3 md:p-4 text-center">Status In</th><th className="p-3 md:p-4 text-center">Status Out</th><th className="p-3 md:p-4 text-center">Foto</th><th className="p-3 md:p-4">Keterangan</th></tr></thead>
                 <tbody className="font-bold text-[#134E4A] dark:text-white">
-                  {filteredData.length > 0 ? (
-                     filteredData.map((row, i) => {
+                  {paginatedData.length > 0 ? (
+                     paginatedData.map((row, i) => {
                       const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(row.id).toUpperCase()) || {};
                       return (
                       <tr key={i} className="border-b border-[#0070BA]/5 dark:border-white/5 hover:bg-white/50 dark:hover:bg-[#00F0FF]/5 transition-colors">
@@ -899,26 +969,27 @@
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono font-bold ${row.shiftClass} align-middle`}>{row.shift}</td>
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono text-center ${row.timeClass} align-middle`}>{cleanTimeStr(row.checkIn)} / {cleanTimeStr(row.checkOut)}</td>
                         <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.loc}</td>
-                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn || row.statusClass || getStatusClass(row.statusIn || row.status)}`}>{row.statusIn || row.status || '-'}</span></td>
-                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut || row.statusClass || getStatusClass(row.statusOut || row.status)}`}>{row.statusOut || row.status || '-'}</span></td>
+                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn}`}>{row.statusIn}</span></td>
+                        <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut}`}>{row.statusOut}</span></td>
                         <td className="p-3 md:p-4 text-center align-middle">
                            <div className="flex justify-center w-full">
                               {row.foto ? <button onClick={(e)=>{ e.stopPropagation(); setGlobalPreviewPhoto(row.foto); }} className="text-[#0070BA] dark:text-[#00F0FF] hover:scale-110 transition-transform"><Camera size={16}/></button> : <span className="text-gray-400">-</span>}
                            </div>
                         </td>
-                        <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 font-bold truncate max-w-[250px] align-middle">{getDisplayKeterangan(row, globalRequests)}</td>
+                        <td className={`p-3 md:p-4 text-[10px] md:text-xs font-bold truncate max-w-[250px] align-middle ${row.noteClass}`}>{row.note}</td>
                       </tr>
                     )})
                   ) : ( <tr><td colSpan="12" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr> )}
                 </tbody>
               </table>
             </div>
+            <PaginationControls currentPage={currentPage} totalPages={maxPage} onPageChange={setCurrentPage} />
           </GlassCard>
         </div>
       );
     }
 
-    function AttendanceScreen({ user, attendancePolicy, onBack, onRecordAbsen }) {
+    function AttendanceScreen({ user, globalAttendance, globalJadwal, globalEmployees, onBack, onRecordAbsen }) {
       const [attendanceType, setAttendanceType] = useState('IN'); const [method, setMethod] = useState('barcode');
       const [locationName, setLocationName] = useState('Melacak posisi GPS...'); const [distance, setDistance] = useState(0);
       const [currentCoord, setCurrentCoord] = useState({ lat: 0, lng: 0 });
@@ -930,18 +1001,16 @@
       const gpsHistoryRef = useRef([]);
       const videoRef = useRef(null); const topRef = useRef(null); const [currentTime, setCurrentTime] = useState(new Date());
 
+      const shiftObj = useMemo(() => getEmpShift(user?.id, globalEmployees, globalJadwal), [user, globalEmployees, globalJadwal]);
+
       useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
       useEffect(() => { if (topRef.current) topRef.current.scrollIntoView({ behavior: 'smooth' }); }, []);
       
-      // Logika disable tombol berdasarkan waktu
-      const toMins = (t) => { const [h, m] = t.split(':').map(Number); return (h || 0) * 60 + (m || 0); };
-      const shift = '08:00 - 17:00';
-      const [inTime, outTime] = shift.split('-').map(t => t.trim());
-      const inMins = toMins(inTime);
-      const outMins = toMins(outTime);
+      const inMins = toMins(shiftObj.in);
+      const outMins = toMins(shiftObj.out);
       const nowMins = currentTime.getHours() * 60 + currentTime.getMinutes();
-      const disabledIN = nowMins > inMins + 240; // Check-in disable jika > 12:00
-      const disabledOUT = nowMins < outMins - 300 || nowMins > outMins + 300; // Check-out disable jika < 12:00 atau > 22:00
+      const disabledIN = nowMins > inMins + 240; 
+      const disabledOUT = nowMins < outMins - 300 || nowMins > outMins + 300; 
       
       useEffect(() => {
         if (disabledIN && !disabledOUT && attendanceType === 'IN') setAttendanceType('OUT');
@@ -954,11 +1023,9 @@
             const accuracy = pos.coords.accuracy || 0;
             setGpsAccuracy(Math.round(accuracy));
             
-            // GPS History untuk averaging (mengurangi noise)
             gpsHistoryRef.current.push({ lat, lng });
             if (gpsHistoryRef.current.length > GPS_HISTORY_SIZE) gpsHistoryRef.current.shift();
             
-            // Hitung rata-rata dari beberapa pembacaan terakhir
             const avgLat = gpsHistoryRef.current.reduce((sum, p) => sum + p.lat, 0) / gpsHistoryRef.current.length;
             const avgLng = gpsHistoryRef.current.reduce((sum, p) => sum + p.lng, 0) / gpsHistoryRef.current.length;
             
@@ -1025,16 +1092,48 @@
                         clearInterval(checkTimer);
                         setQrVerified(true);
                         setQrWarning(false);
-                        // Langsung simpan absensi tanpa perlu ke selfie
+                        
                         setIsProcessing(true);
                         const now = new Date(); 
-                        const shiftVal = '08:00 - 17:00'; 
-                        const statusObj = getAttendanceStatus(now, attendanceType, shiftVal, attendancePolicy, false);
+                        const yyyy = now.getFullYear(); const mm = String(now.getMonth() + 1).padStart(2, '0'); const dd = String(now.getDate()).padStart(2, '0');
+                        const dateStr = `${yyyy}-${mm}-${dd}`;
+                        
+                        const existingAbsen = globalAttendance?.find(a => String(a.id).toUpperCase() === String(user?.id).toUpperCase() && a.date === dateStr);
+
+                        if (attendanceType === 'IN' && existingAbsen && existingAbsen.checkIn && existingAbsen.checkIn !== '-') {
+                            alert("Anda sudah melakukan Check-In hari ini!");
+                            setIsProcessing(false);
+                            setMethod('barcode');
+                            return;
+                        }
+                        if (attendanceType === 'OUT' && existingAbsen && existingAbsen.checkOut && existingAbsen.checkOut !== '-') {
+                            alert("Anda sudah melakukan Check-Out hari ini!");
+                            setIsProcessing(false);
+                            setMethod('barcode');
+                            return;
+                        }
+
+                        const shiftVal = `${shiftObj.in} - ${shiftObj.out}`; 
+                        const statusObj = getAttendanceStatus(now, attendanceType, shiftVal);
                         const locName = distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName;
-                        const statusLabel = statusObj.notification || statusObj.status;
-                        const newAbsenPayload = { type: attendanceType, id: user?.id || 'EMP01', nama: user?.name || 'User', date: now.toISOString().split('T')[0], displayDate: formatIndoDate(now.toISOString().split('T')[0]), day: now.toLocaleDateString('id-ID', {weekday: 'long'}), shift: shiftVal, checkIn: attendanceType === 'IN' ? formatTime(now) : '', checkOut: attendanceType === 'OUT' ? formatTime(now) : '', loc: locName, lat: currentCoord.lat, lng: currentCoord.lng, status: statusObj.status.toUpperCase(), statusIn: attendanceType === 'IN' ? statusObj.status : undefined, statusOut: attendanceType === 'OUT' ? statusObj.status : undefined, keterangan: 'Scan QR Kantor', hours: attendanceType === 'IN' ? 0 : 9, foto: '' };
+                        
+                        const newAbsenPayload = { 
+                            id: user?.id || 'EMP01', 
+                            nama: user?.name || 'User', 
+                            date: dateStr, 
+                            displayDate: formatIndoDate(dateStr), 
+                            day: now.toLocaleDateString('id-ID', {weekday: 'long'}), 
+                            checkIn: attendanceType === 'IN' ? formatTime(now) : (existingAbsen ? existingAbsen.checkIn : ''), 
+                            checkOut: attendanceType === 'OUT' ? formatTime(now) : (existingAbsen ? existingAbsen.checkOut : ''), 
+                            loc: locName, 
+                            lat: currentCoord.lat, 
+                            lng: currentCoord.lng, 
+                            keterangan: 'Scan QR Kantor', 
+                            foto: existingAbsen ? existingAbsen.foto : '' 
+                        };
+                        
                         if (onRecordAbsen) onRecordAbsen(newAbsenPayload);
-                        setResult({ success: statusObj.status !== 'Diluar Batas', time: formatTime(now), status: statusLabel, locName: locName, color: statusObj.color.split(' ')[0] });
+                        setResult({ success: !statusObj.status.includes('Diluar Batas'), time: formatTime(now), status: statusObj.status, locName: locName, color: statusObj.color.split(' ')[0] });
                         setIsProcessing(false);
                         setTimeout(() => setQrVerified(false), 8000);
                         return;
@@ -1048,7 +1147,7 @@
           }, 250); 
         }
         return () => clearInterval(checkTimer);
-      }, [method, distance, result, attendanceType, isProcessing]);
+      }, [method, distance, result, attendanceType, isProcessing, globalAttendance, user, currentCoord, locationName, onRecordAbsen]);
 
       const capturePhoto = () => { 
          if (videoRef.current) { 
@@ -1086,12 +1185,45 @@
       
       const handleAction = async () => { 
          setIsProcessing(true);
-         const now = new Date(); const shiftVal = '08:00 - 17:00'; const statusObj = getAttendanceStatus(now, attendanceType, shiftVal, attendancePolicy, false);
+         const now = new Date(); 
+         const yyyy = now.getFullYear(); const mm = String(now.getMonth() + 1).padStart(2, '0'); const dd = String(now.getDate()).padStart(2, '0');
+         const dateStr = `${yyyy}-${mm}-${dd}`;
+         
+         const existingAbsen = globalAttendance?.find(a => String(a.id).toUpperCase() === String(user?.id).toUpperCase() && a.date === dateStr);
+
+         if (attendanceType === 'IN' && existingAbsen && existingAbsen.checkIn && existingAbsen.checkIn !== '-') {
+             alert("Anda sudah melakukan Check-In hari ini!");
+             setIsProcessing(false);
+             return;
+         }
+         if (attendanceType === 'OUT' && existingAbsen && existingAbsen.checkOut && existingAbsen.checkOut !== '-') {
+             alert("Anda sudah melakukan Check-Out hari ini!");
+             setIsProcessing(false);
+             return;
+         }
+
+         const shiftVal = `${shiftObj.in} - ${shiftObj.out}`; 
+         const statusObj = getAttendanceStatus(now, attendanceType, shiftVal);
          const locName = distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName;
-         const statusLabel = statusObj.notification || statusObj.status;
-         const newAbsenPayload = { type: attendanceType, id: user?.id || 'EMP01', nama: user?.name || 'User', date: now.toISOString().split('T')[0], displayDate: formatIndoDate(now.toISOString().split('T')[0]), day: now.toLocaleDateString('id-ID', {weekday: 'long'}), shift: shiftVal, checkIn: attendanceType === 'IN' ? formatTime(now) : '', checkOut: attendanceType === 'OUT' ? formatTime(now) : '', loc: locName, lat: currentCoord.lat, lng: currentCoord.lng, status: statusObj.status.toUpperCase(), statusIn: attendanceType === 'IN' ? statusObj.status : undefined, statusOut: attendanceType === 'OUT' ? statusObj.status : undefined, keterangan: method === 'selfie' ? 'Dinas Luar / Selfie' : 'Absensi Normal', hours: attendanceType === 'IN' ? 0 : 9, foto: capturedPhoto || '' };
+         
+         const newAbsenPayload = { 
+             id: user?.id || 'EMP01', 
+             nama: user?.name || 'User', 
+             date: dateStr, 
+             displayDate: formatIndoDate(dateStr), 
+             day: now.toLocaleDateString('id-ID', {weekday: 'long'}), 
+             checkIn: attendanceType === 'IN' ? formatTime(now) : (existingAbsen ? existingAbsen.checkIn : ''), 
+             checkOut: attendanceType === 'OUT' ? formatTime(now) : (existingAbsen ? existingAbsen.checkOut : ''), 
+             loc: locName, 
+             lat: currentCoord.lat, 
+             lng: currentCoord.lng, 
+             keterangan: method === 'selfie' ? 'Dinas Luar / Selfie' : 'Absensi Normal', 
+             foto: capturedPhoto || (existingAbsen ? existingAbsen.foto : '')
+         };
+         
          if (onRecordAbsen) onRecordAbsen(newAbsenPayload);
-         setResult({ success: statusObj.status !== 'Diluar Batas', time: formatTime(now), status: statusLabel, locName: locName, color: statusObj.color.split(' ')[0] }); setIsProcessing(false);
+         setResult({ success: !statusObj.status.includes('Diluar Batas'), time: formatTime(now), status: statusObj.status, locName: locName, color: statusObj.color.split(' ')[0] }); 
+         setIsProcessing(false);
       };
 
       if (result) return (
@@ -1240,46 +1372,67 @@
       );
     }
 
-    function ReportsScreen({ role, user, globalAttendance, globalRequests, globalEmployees, uiSettings, payrollLabels, activeTab, setActiveTab, setGlobalPreviewPhoto }) {
+    function ReportsScreen({ role, user, globalAttendance, globalRequests, globalEmployees, globalJadwal, uiSettings, payrollLabels, activeTab, setActiveTab, setGlobalPreviewPhoto, globalLibur, globalCutiBersama }) {
       const [searchQuery, setSearchQuery] = useState('');
       const today = new Date(); const curYear = today.getFullYear(); const curMonth = String(today.getMonth() + 1).padStart(2, '0');
       const [slipPeriod, setSlipPeriod] = useState(`${curYear}-${curMonth}`); 
-      const [startDate, setStartDate] = useState(''); const [endDate, setEndDate] = useState('');
+      
+      const getDefaultPeriod = () => {
+          const t = new Date(); let sm = t.getMonth(); let sy = t.getFullYear(); let em = t.getMonth(); let ey = t.getFullYear();
+          if (t.getDate() > 20) { em = sm + 1; if (em > 11) { em = 0; ey++; } } 
+          else { sm = em - 1; if (sm < 0) { sm = 11; sy--; } }
+          const p = (n) => String(n).padStart(2, '0');
+          return { s: `${sy}-${p(sm + 1)}-21`, e: `${ey}-${p(em + 1)}-20` };
+      };
+      
+      const [startDate, setStartDate] = useState(getDefaultPeriod().s); 
+      const [endDate, setEndDate] = useState(getDefaultPeriod().e);
       
       useEffect(() => {
         if (activeTab === 'slip' && slipPeriod) {
           const [yearStr, monthStr] = slipPeriod.split('-'); let year = parseInt(yearStr, 10); let month = parseInt(monthStr, 10);
           let prevMonth = month - 1; let prevYear = year; if (prevMonth === 0) { prevMonth = 12; prevYear -= 1; }
           setStartDate(`${prevYear}-${String(prevMonth).padStart(2, '0')}-21`); setEndDate(`${year}-${String(month).padStart(2, '0')}-20`);
-        } else if (activeTab !== 'slip') { setStartDate(''); setEndDate(''); }
+        }
       }, [slipPeriod, activeTab]);
 
       const [statusFilter, setStatusFilter] = useState('Semua'); const [approveFilter, setApproveFilter] = useState('Semua');
-      const [selectedSlipEmp, setSelectedSlipEmp] = useState(user?.role === 'user' ? user.id : '');
+      const [selectedSlipEmp, setSelectedSlipEmp] = useState('');
 
       useEffect(() => {
-        if (!selectedSlipEmp && globalEmployees.length > 0) {
-          setSelectedSlipEmp(user?.role === 'user' ? user.id : globalEmployees[0].id);
+        if (activeTab === 'slip') {
+           if (role === 'user' && selectedSlipEmp !== user?.id) {
+               setSelectedSlipEmp(user?.id);
+           } else if (role !== 'user' && !selectedSlipEmp && globalEmployees.length > 0) {
+               setSelectedSlipEmp(globalEmployees[0].id);
+           }
         }
-      }, [globalEmployees, user, selectedSlipEmp]);
+      }, [activeTab, role, user, globalEmployees, selectedSlipEmp]);
+
+      const completeAttendance = useMemo(() => {
+          const specificId = role === 'user' ? user?.id : null;
+          return buildCompleteAttendanceView(globalAttendance, globalEmployees, globalRequests, globalJadwal, globalLibur, globalCutiBersama, startDate, endDate, specificId);
+      }, [globalAttendance, globalEmployees, globalRequests, globalJadwal, globalLibur, globalCutiBersama, startDate, endDate, role, user]);
 
       const filterData = (dataArray, dateField) => {
         return dataArray.filter(item => {
           const matchSearch = role === 'user' ? item.id === user.id : (String(item.nama || '').toLowerCase().includes(searchQuery.toLowerCase()) || String(item.id || '').toLowerCase().includes(searchQuery.toLowerCase()));
-          const matchStatus = statusFilter === 'Semua' || item.status.toLowerCase() === statusFilter.toLowerCase();
+          const matchStatus = statusFilter === 'Semua' || (item.status && item.status.toLowerCase() === statusFilter.toLowerCase());
           const matchApprove = approveFilter === 'Semua' || item.status === approveFilter;
           let matchDate = true;
-          if (startDate || endDate) {
-            const itemDate = new Date(item[dateField]); const start = startDate ? new Date(startDate) : new Date(-8640000000000000); const end = endDate ? new Date(endDate) : new Date(8640000000000000);
-            matchDate = itemDate >= start && itemDate <= end;
+          if (startDate && endDate && item[dateField]) {
+            matchDate = item[dateField] >= startDate && item[dateField] <= endDate;
           }
           if(activeTab === 'cuti') return matchSearch && matchDate && matchApprove;
           return matchSearch && matchDate && matchStatus;
         });
       };
 
-      const filteredAbsensi = filterData(globalAttendance, 'date'); 
+      const filteredAbsensi = filterData(completeAttendance, 'date'); 
       const filteredCuti = filterData(globalRequests, 'tglMulai').filter(r => r.jenis.toLowerCase().includes('cuti'));
+
+      const { currentData: paginatedAbsen, currentPage: pageAbsen, maxPage: maxPageAbsen, setCurrentPage: setPageAbsen } = usePagination(filteredAbsensi, 25);
+      const { currentData: paginatedCuti, currentPage: pageCuti, maxPage: maxPageCuti, setCurrentPage: setPageCuti } = usePagination(filteredCuti, 25);
 
       const handleExportExcel = () => {
         let tableHTML = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table border="1">';
@@ -1287,17 +1440,13 @@
             tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Lokasi</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
             filteredAbsensi.forEach(r => { 
                 const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(r.id).toUpperCase()) || {};
-                const statusIn = r.statusIn || r.status || '-';
-                const statusOut = r.statusOut || r.status || '-';
-                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.loc}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${statusIn}</td><td>${statusOut}</td><td>${getDisplayKeterangan(r, globalRequests)}</td></tr>`; 
+                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.loc}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.statusIn}</td><td>${r.statusOut}</td><td>${r.note}</td></tr>`; 
             });
         } else if (activeTab === 'uang') {
             tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Uang Makan</th><th style="background-color:#0070BA; color:white;">Uang Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
             filteredAbsensi.forEach(r => { 
                 const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(r.id).toUpperCase()) || {};
-                const statusIn = r.statusIn || r.status || '-';
-                const statusOut = r.statusOut || r.status || '-';
-                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.uangMakan || 0}</td><td>${r.uangLembur || 0}</td><td>${statusIn}</td><td>${statusOut}</td><td>${getDisplayKeterangan(r, globalRequests)}</td></tr>`; 
+                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.uangMakan || 0}</td><td>${r.uangLembur || 0}</td><td>${r.statusIn}</td><td>${r.statusOut}</td><td>${r.note}</td></tr>`; 
             });
         } else if (activeTab === 'cuti') {
             tableHTML += '<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal Mulai</th><th style="background-color:#0070BA; color:white;">Tanggal Selesai</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jumlah Hari</th><th style="background-color:#0070BA; color:white;">Sisa Cuti</th><th style="background-color:#0070BA; color:white;">Keterangan</th><th style="background-color:#0070BA; color:white;">Approval</th></tr></thead><tbody>';
@@ -1312,7 +1461,7 @@
 
       const handleExportPDF = () => {
          if(activeTab === 'slip') {
-             const emp = globalEmployees.find(e => e.id === selectedSlipEmp);
+             const emp = globalEmployees.find(e => String(e.id).toUpperCase() === String(selectedSlipEmp).toUpperCase());
              if (!emp) return alert("Silakan pilih karyawan terlebih dahulu!");
              if (!window.html2pdf) return alert("Library PDF sedang dimuat, coba lagi.");
              const element = document.getElementById('slip-gaji-print'); 
@@ -1384,7 +1533,7 @@
 
                       {(activeTab === 'absensi' || activeTab === 'uang') && (
                         <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="p-2.5 bg-white/60 dark:bg-[#111827] border border-[#0070BA]/20 rounded-xl text-[10px] md:text-xs outline-none w-full sm:w-auto shrink-0">
-                           <option value="Semua">Semua Status</option><option value="Sangat Hadir">Sangat Hadir</option><option value="Hadir">Hadir</option><option value="Telat">Telat</option><option value="Sangat Telat">Sangat Telat</option><option value="Lembur">Lembur</option><option value="Sakit">Sakit</option><option value="Izin">Izin</option><option value="Cuti">Cuti</option><option value="Absen">Absen</option>
+                           <option value="Semua">Semua Status</option><option value="Normal">Normal</option><option value="Telat">Telat</option><option value="Sangat Telat">Sangat Telat</option><option value="Lembur">Lembur</option><option value="Sakit">Sakit</option><option value="Izin">Izin</option><option value="Cuti">Cuti</option><option value="Absen">Absen</option>
                         </select>
                       )}
 
@@ -1405,7 +1554,7 @@
 
           {['absensi', 'uang'].includes(activeTab) && (
             <GlassCard className="p-0 overflow-hidden" id="report-table-print">
-               <div className="overflow-x-auto w-full custom-scrollbar bg-white/5 dark:bg-white/0 p-4">
+               <div className="overflow-x-auto w-full custom-scrollbar bg-white/5 dark:bg-white/0 p-4 pb-2">
                  <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs min-w-[max-content] border-collapse">
                    <thead className="bg-white/40 dark:bg-[#0A1128] text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-black/5">
                      <tr>
@@ -1424,8 +1573,8 @@
                      </tr>
                    </thead>
                    <tbody className="font-bold text-[#134E4A] dark:text-white">
-                     {filteredAbsensi.length > 0 ? (
-                        filteredAbsensi.map((row, i) => {
+                     {paginatedAbsen.length > 0 ? (
+                        paginatedAbsen.map((row, i) => {
                             const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(row.id).toUpperCase()) || {};
                             return (
                             <tr key={i} className="border-b border-[#0070BA]/5 dark:border-white/5 hover:bg-white/50 dark:hover:bg-[#00F0FF]/5 transition-colors">
@@ -1444,50 +1593,53 @@
                               <td className="p-3 md:p-4 text-center text-purple-500 align-middle">{row.lembur}</td>
                               {activeTab === 'uang' && <td className="p-3 md:p-4 text-right font-mono text-emerald-600 dark:text-emerald-400 align-middle">{formatRupiah(row.uangMakan || 0)}</td>}
                               {activeTab === 'uang' && <td className="p-3 md:p-4 text-right font-mono text-purple-600 dark:text-purple-400 align-middle">{formatRupiah(row.uangLembur || 0)}</td>}
-                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn || row.statusClass || getStatusClass(row.statusIn || row.status)}`}>{row.statusIn || row.status || '-'}</span></td>
-                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut || row.statusClass || getStatusClass(row.statusOut || row.status)}`}>{row.statusOut || row.status || '-'}</span></td>
+                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn}`}>{row.statusIn}</span></td>
+                              <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut}`}>{row.statusOut}</span></td>
                               {activeTab === 'absensi' && <td className="p-3 md:p-4 text-center align-middle">
                                  <div className="flex justify-center w-full">
                                     {row.foto ? <button onClick={(e)=>{ e.stopPropagation(); setGlobalPreviewPhoto(row.foto); }} className="text-[#0070BA] dark:text-[#00F0FF] hover:scale-110 transition-transform"><Camera size={16}/></button> : <span className="text-gray-400">-</span>}
                                  </div>
                               </td>}
-                              <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 font-bold truncate max-w-[250px] align-middle">{getDisplayKeterangan(row, globalRequests)}</td>
+                              <td className={`p-3 md:p-4 text-[10px] md:text-xs font-bold truncate max-w-[250px] align-middle ${row.noteClass}`}>{row.note}</td>
                             </tr>
                           )})
                      ) : (<tr><td colSpan="17" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr>)}
                    </tbody>
                  </table>
                </div>
+               <PaginationControls currentPage={pageAbsen} totalPages={maxPageAbsen} onPageChange={setPageAbsen} />
             </GlassCard>
           )}
 
           {activeTab === 'cuti' && (
             <GlassCard className="p-0 overflow-hidden" id="report-table-print">
-               <div className="overflow-x-auto w-full custom-scrollbar bg-white/5 dark:bg-white/0 p-4">
+               <div className="overflow-x-auto w-full custom-scrollbar bg-white/5 dark:bg-white/0 p-4 pb-2">
                  <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs min-w-[max-content] border-collapse">
                    <thead className="bg-white/40 dark:bg-[#0A1128] text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-black/5">
                      <tr><th className="p-4">Tanggal Mulai</th><th className="p-4">Tanggal Selesai</th><th className="p-4">Karyawan</th><th className="p-4">Departemen</th><th className="p-4">Jabatan</th><th className="p-4 text-center">Jumlah Hari</th><th className="p-4 text-center">Sisa Cuti</th><th className="p-4">Keterangan</th><th className="p-4 text-center">Approval</th></tr>
                    </thead>
                    <tbody className="font-bold text-[#134E4A] dark:text-white">
-                     {filteredCuti.length > 0 ? filteredCuti.map((r,i) => {
+                     {paginatedCuti.length > 0 ? paginatedCuti.map((r,i) => {
                         const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(r.id).toUpperCase()) || {};
                         return (<tr key={i} className="border-b border-black/5 hover:bg-white/5"><td className="p-4 font-mono align-middle">{formatIndoDate(r.tglMulai)}</td><td className="p-4 font-mono align-middle">{formatIndoDate(r.tglSelesai)}</td><td className="p-4 align-middle">{r.nama}</td><td className="p-4 opacity-70 align-middle">{empInfo.dept || '-'}</td><td className="p-4 opacity-70 align-middle">{empInfo.jabatan || '-'}</td><td className="p-4 text-center text-rose-500 font-bold align-middle">{r.lamaHari} Hari</td><td className="p-4 text-center text-teal-600 font-bold align-middle">{empInfo.sisaCuti || '-'} Hari</td><td className="p-4 truncate max-w-[300px] opacity-70 align-middle">{r.alasan}</td><td className="p-4 align-middle"><div className="flex justify-center w-full"><span className={`text-[9px] font-black uppercase border px-2 py-1 rounded ${r.status==='Approved'?'text-teal-600 border-teal-300':r.status==='Rejected'?'text-rose-600 border-rose-300':'text-amber-600 border-amber-300'}`}>{r.status}</span></div></td></tr>);
                      }) : <tr><td colSpan="9" className="p-8 text-center text-gray-500 uppercase tracking-widest text-[10px]">Data tidak ditemukan</td></tr>}
                    </tbody>
                  </table>
                </div>
+               <PaginationControls currentPage={pageCuti} totalPages={maxPageCuti} onPageChange={setPageCuti} />
             </GlassCard>
           )}
 
           {activeTab === 'slip' && (
             <div className="w-full overflow-x-auto p-4 md:p-8 custom-scrollbar bg-gray-100/50 dark:bg-[#0A1128]/50 rounded-2xl">
-              {globalEmployees.find(e => e.id === selectedSlipEmp) ? (
+              {globalEmployees.find(e => String(e.id).toUpperCase() === String(selectedSlipEmp).toUpperCase()) ? (
                 <div className="w-[800px] min-w-[800px] max-w-[800px] mx-auto bg-white p-10 text-gray-800 shadow-xl relative" id="slip-gaji-print" style={{fontFamily: 'sans-serif'}}>
-                    <div className="flex justify-between items-center border-b-2 border-gray-300 pb-6 mb-6">
-                       <div>
+                    <div className="flex justify-between items-start border-b-2 border-gray-300 pb-6 mb-6">
+                       <div className="flex-1 pr-4">
                            <h2 className="text-2xl font-black text-[#0070BA] uppercase tracking-wider">{uiSettings.companyName}</h2>
+                           {uiSettings.companyAddress && <p className="text-xs text-gray-500 font-bold mt-1 max-w-[280px] leading-relaxed">{uiSettings.companyAddress}</p>}
                        </div>
-                       <div className="text-right">
+                       <div className="text-right shrink-0">
                            <h1 className="text-3xl font-black text-[#0070BA] tracking-widest uppercase">SLIP GAJI</h1>
                            <p className="text-sm font-bold text-gray-600 mt-1">Periode: {slipPeriod ? new Date(slipPeriod + '-01').toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }) : ''}</p>
                            <p className="text-xs font-bold text-gray-500 mt-1">Tutup Buku: {formatIndoDate(startDate)} - {formatIndoDate(endDate)}</p>
@@ -1496,20 +1648,49 @@
                     <div className="mb-8 text-sm">
                       <table className="text-[#134E4A] font-bold">
                         <tbody>
-                          <tr><td className="text-gray-500 pr-4 pb-2">Nama Karyawan</td><td className="pb-2">: {globalEmployees.find(e => e.id === selectedSlipEmp)?.nama}</td></tr>
-                          <tr><td className="text-gray-500 pr-4 pb-2">Jabatan</td><td className="pb-2">: {globalEmployees.find(e => e.id === selectedSlipEmp)?.jabatan}</td></tr>
-                          <tr><td className="text-gray-500 pr-4 pb-2">Departemen</td><td className="pb-2">: {globalEmployees.find(e => e.id === selectedSlipEmp)?.dept}</td></tr>
+                          <tr><td className="text-gray-500 pr-4 pb-2">Nama Karyawan</td><td className="pb-2">: {globalEmployees.find(e => String(e.id).toUpperCase() === String(selectedSlipEmp).toUpperCase())?.nama}</td></tr>
+                          <tr><td className="text-gray-500 pr-4 pb-2">Jabatan</td><td className="pb-2">: {globalEmployees.find(e => String(e.id).toUpperCase() === String(selectedSlipEmp).toUpperCase())?.jabatan}</td></tr>
+                          <tr><td className="text-gray-500 pr-4 pb-2">Departemen</td><td className="pb-2">: {globalEmployees.find(e => String(e.id).toUpperCase() === String(selectedSlipEmp).toUpperCase())?.dept}</td></tr>
                         </tbody>
                       </table>
                     </div>
                     
                     {(() => {
-                      const emp = globalEmployees.find(e => e.id === selectedSlipEmp);
-                      const totalAbsen = globalAttendance.filter(a => a.id === emp.id && a.status.toUpperCase() === 'ABSEN' && new Date(a.date) >= (startDate?new Date(startDate):new Date(-8.64e15)) && new Date(a.date) <= (endDate?new Date(endDate):new Date(8.64e15))).length;
-                      const finalPAbsen = emp.pAbsen > 0 ? emp.pAbsen : Math.round((emp.gapok / 30) * totalAbsen);
-                      const pendapatan = Number(emp.gapok)+Number(emp.tMakan)+Number(emp.tJabatan)+Number(emp.tTransport)+Number(emp.tThr)+Number(emp.tKes)+Number(emp.insentif);
-                      const potongan = Number(emp.pAsuransi)+Number(emp.pBpjsKs)+Number(emp.pBpjstk)+Number(emp.pPinjam)+Number(finalPAbsen)+Number(emp.pLain);
+                      const emp = globalEmployees.find(e => String(e.id).toUpperCase() === String(selectedSlipEmp).toUpperCase());
+                      
+                      // Mengumpulkan data absen per karyawan pada periode berjalan
+                      const periodRecords = completeAttendance.filter(a => String(a.id).toUpperCase() === String(emp.id).toUpperCase() && new Date(a.date) >= (startDate?new Date(startDate):new Date(-8.64e15)) && new Date(a.date) <= (endDate?new Date(endDate):new Date(8.64e15)));
+                      
+                      let totalHadir = 0;
+                      let totalTelat = 0;
+                      let totalIzin = 0;
+                      let totalSakit = 0;
+                      let totalCuti = 0;
+                      let totalAbsen = 0;
+                      let totalUangMakan = 0;
+                      let totalUangLembur = 0;
+
+                      periodRecords.forEach(r => {
+                          const s = String(r.status).toUpperCase();
+                          const sIn = String(r.statusIn).toUpperCase();
+                          
+                          if (s.includes('IZIN')) totalIzin++;
+                          else if (s.includes('SAKIT')) totalSakit++;
+                          else if (s.includes('CUTI')) totalCuti++;
+                          else if (s.includes('ABSEN') || s.includes('ALFA')) totalAbsen++;
+                          else totalHadir++;
+                          
+                          if (sIn.includes('TELAT') || s.includes('TELAT')) totalTelat++;
+                          
+                          totalUangMakan += Number(r.uangMakan || 0);
+                          totalUangLembur += Number(r.uangLembur || 0);
+                      });
+
+                      const finalPAbsen = Math.round((Number(emp.gapok) / 30) * totalAbsen) + Number(emp.pAbsen || 0);
+                      const pendapatan = Number(emp.gapok) + totalUangMakan + Number(emp.tJabatan) + Number(emp.tTransport) + Number(emp.tThr) + Number(emp.tKes) + Number(emp.insentif) + totalUangLembur;
+                      const potongan = Number(emp.pAsuransi) + Number(emp.pBpjsKs) + Number(emp.pBpjstk) + Number(emp.pPinjam) + finalPAbsen + Number(emp.pLain);
                       const thp = pendapatan - potongan;
+                      
                       return (
                         <>
                           <div className="grid grid-cols-2 gap-10 mb-8">
@@ -1517,12 +1698,13 @@
                                 <h4 className="text-sm font-black text-teal-600 border-b border-teal-200 pb-2 mb-3 uppercase tracking-widest">Pendapatan</h4>
                                 <div className="space-y-3 text-xs">
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.gapok}</span><span className="font-bold">{formatRupiah(emp.gapok)}</span></div>
-                                  <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.tMakan}</span><span className="font-bold">{formatRupiah(emp.tMakan)}</span></div>
+                                  <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.tMakan}</span><span className="font-bold">{formatRupiah(totalUangMakan)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.tJabatan}</span><span className="font-bold">{formatRupiah(emp.tJabatan)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.tTransport}</span><span className="font-bold">{formatRupiah(emp.tTransport)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.tThr}</span><span className="font-bold">{formatRupiah(emp.tThr)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.tKes}</span><span className="font-bold">{formatRupiah(emp.tKes)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.insentif}</span><span className="font-bold">{formatRupiah(emp.insentif)}</span></div>
+                                  <div className="flex justify-between"><span className="text-gray-600">Uang Lembur</span><span className="font-bold text-purple-600">{formatRupiah(totalUangLembur)}</span></div>
                                 </div>
                                 <div className="flex justify-between border-t border-teal-200 mt-4 pt-3"><span className="font-black text-teal-700 text-sm">Total Pendapatan</span><span className="font-black text-teal-700 text-sm">{formatRupiah(pendapatan)}</span></div>
                              </div>
@@ -1533,14 +1715,27 @@
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.pBpjsKs}</span><span className="font-bold">{formatRupiah(emp.pBpjsKs)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.pBpjstk}</span><span className="font-bold">{formatRupiah(emp.pBpjstk)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.pPinjam}</span><span className="font-bold">{formatRupiah(emp.pPinjam)}</span></div>
-                                  <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.pAbsen}</span><span className="font-bold">{formatRupiah(finalPAbsen)}</span></div>
+                                  <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.pAbsen}</span><span className="font-bold text-rose-600">{formatRupiah(finalPAbsen)}</span></div>
                                   <div className="flex justify-between"><span className="text-gray-600">{payrollLabels.pLain}</span><span className="font-bold">{formatRupiah(emp.pLain)}</span></div>
                                 </div>
                                 <div className="flex justify-between border-t border-rose-200 mt-4 pt-3"><span className="font-black text-rose-700 text-sm">Total Potongan</span><span className="font-black text-rose-700 text-sm">{formatRupiah(potongan)}</span></div>
                              </div>
                           </div>
-                          <div className="bg-[#0070BA]/5 border border-[#0070BA]/20 rounded-xl p-6 flex justify-between items-center mb-10"><span className="text-sm font-black uppercase tracking-widest text-[#0070BA]">Penerimaan Bersih (THP)</span><span className="text-2xl font-black font-mono text-[#0070BA]">{formatRupiah(thp)}</span></div>
-                          <div className="grid grid-cols-2 gap-4 text-center pt-8 text-xs"><div><p className="text-gray-500 mb-16">Penerima,</p><p className="font-bold text-[#134E4A] underline">{emp.nama}</p></div><div><p className="text-gray-500 mb-16">Mengetahui,</p><p className="font-bold text-[#134E4A] underline">{uiSettings.hrdName || 'HRD Manager'}</p><p className="text-[9px] text-gray-500">{uiSettings.hrdTitle || 'HR & GA'}</p></div></div>
+                          <div className="bg-[#0070BA]/5 border border-[#0070BA]/20 rounded-xl p-6 flex justify-between items-center mb-6"><span className="text-sm font-black uppercase tracking-widest text-[#0070BA]">Penerimaan Bersih (THP)</span><span className="text-2xl font-black font-mono text-[#0070BA]">{formatRupiah(thp)}</span></div>
+                          
+                          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-10">
+                             <h4 className="text-[10px] font-black uppercase text-gray-500 tracking-widest mb-3 border-b border-gray-200 pb-2">Catatan Kehadiran Periode Ini</h4>
+                             <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-center">
+                                 <div><p className="text-[9px] text-gray-500 uppercase">Hadir</p><p className="font-bold text-[#134E4A]">{totalHadir} Hr</p></div>
+                                 <div><p className="text-[9px] text-gray-500 uppercase">Telat</p><p className="font-bold text-amber-600">{totalTelat} Kali</p></div>
+                                 <div><p className="text-[9px] text-gray-500 uppercase">Izin</p><p className="font-bold text-[#134E4A]">{totalIzin} Hr</p></div>
+                                 <div><p className="text-[9px] text-gray-500 uppercase">Sakit</p><p className="font-bold text-[#134E4A]">{totalSakit} Hr</p></div>
+                                 <div><p className="text-[9px] text-gray-500 uppercase">Cuti</p><p className="font-bold text-[#134E4A]">{totalCuti} Hr</p></div>
+                                 <div><p className="text-[9px] text-gray-500 uppercase">Absen</p><p className="font-bold text-rose-600">{totalAbsen} Hr</p></div>
+                             </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 text-center pt-4 text-xs"><div><p className="text-gray-500 mb-16">Penerima,</p><p className="font-bold text-[#134E4A] underline">{emp.nama}</p></div><div><p className="text-gray-500 mb-16">Mengetahui,</p><p className="font-bold text-[#134E4A] underline">{uiSettings.hrdName || 'HRD Manager'}</p><p className="text-[9px] text-gray-500">{uiSettings.hrdTitle || 'HR & GA'}</p></div></div>
                         </>
                       );
                     })()}
@@ -1629,16 +1824,18 @@
 
     function TabApprove({ simulateAutoSave, globalRequests, setGlobalRequests, onApprovalDecision, onDeleteRequest, onUpdateReq, setGlobalPreviewPhoto }) {
       const [editReqIndex, setEditReqIndex] = useState(null); const [reqForm, setReqForm] = useState({ jenis: '', alasan: '' });
+      const { currentData: paginatedReqs, currentPage, maxPage, setCurrentPage } = usePagination(globalRequests, 25);
       
       return (
         <GlassCard className="p-6">
           <div className="flex justify-between items-center border-b border-[#0070BA]/10 dark:border-white/10 pb-4 mb-4"><h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Daftar Persetujuan</h3><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl"><Save size={16} /></button></div>
-          <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5 custom-scrollbar pb-2">
+          <div className="overflow-x-auto rounded-t-xl border border-b-0 border-black/5 dark:border-white/5 custom-scrollbar">
             <table className="w-full text-left whitespace-nowrap min-w-[800px]"><thead className="bg-white/40 dark:bg-[#0A1128] text-[10px] text-gray-500 uppercase tracking-widest"><tr><th className="p-4 align-middle">Karyawan</th><th className="p-4 align-middle">Jenis Pengajuan</th><th className="p-4 align-middle">Info/Tanggal</th><th className="p-4 align-middle text-center">Hari</th><th className="p-4 align-middle">Alasan</th><th className="p-4 text-center align-middle">Foto</th><th className="p-4 text-center align-middle">Approval & Aksi</th></tr></thead><tbody>
-                {globalRequests.length > 0 ? globalRequests.map((req, i) => {
+                {paginatedReqs.length > 0 ? paginatedReqs.map((req, j) => {
+                  const i = globalRequests.findIndex(r => r.idReq === req.idReq); // get true index
                   const t1 = new Date(req.tglMulai); const t2 = new Date(req.tglSelesai); const days = Math.ceil((t2-t1)/(1000*60*60*24))+1;
                   return (
-                  <tr key={i} className="border-b border-black/5 dark:border-white/5 text-xs font-bold text-[#134E4A] dark:text-white hover:bg-white/50 dark:hover:bg-white/5 transition-colors">
+                  <tr key={j} className="border-b border-black/5 dark:border-white/5 text-xs font-bold text-[#134E4A] dark:text-white hover:bg-white/50 dark:hover:bg-white/5 transition-colors">
                     <td className="p-4 align-middle"><div className="flex flex-col justify-center"><span>{req.nama}</span><span className="text-[9px] font-mono opacity-50 mt-0.5">{req.id}</span></div></td>
                     <td className="p-4 align-middle text-[#0070BA] dark:text-[#00F0FF]">{editReqIndex === i ? <input type="text" value={reqForm.jenis} onChange={e=>setReqForm({...reqForm, jenis: e.target.value})} className="w-24 bg-transparent border-b border-[#0070BA] outline-none" autoFocus /> : req.jenis}</td>
                     <td className="p-4 align-middle font-mono">{req.tgl}</td>
@@ -1657,6 +1854,7 @@
                 )}) : (<tr><td colSpan="7" className="p-8 text-center text-xs font-bold text-gray-500 uppercase tracking-widest align-middle">Belum ada pengajuan.</td></tr>)}
               </tbody></table>
           </div>
+          <PaginationControls currentPage={currentPage} totalPages={maxPage} onPageChange={setCurrentPage} />
         </GlassCard>
       );
     }
@@ -1664,6 +1862,7 @@
     function TabTampilan({ simulateAutoSave, uiSettings, setUiSettings }) {
       const [textParams, setTextParams] = useState([
         { id: 'companyName', param: 'Nama Perusahaan', value: uiSettings.companyName || 'PT. Samudra Asia Engineering' }, 
+        { id: 'companyAddress', param: 'Alamat Perusahaan', value: uiSettings.companyAddress || 'Jl. Raya Perjuangan No. 1, Kebon Jeruk, Jakarta Barat' },
         { id: 'hrdName', param: 'PEJABAT', value: uiSettings.hrdName || 'Bpk. Andi Setiawan' }, 
         { id: 'hrdTitle', param: 'JABATAN', value: uiSettings.hrdTitle || 'Head of HR & GA' }
       ]);
@@ -1671,6 +1870,7 @@
       useEffect(() => {
         setTextParams([
           { id: 'companyName', param: 'Nama Perusahaan', value: uiSettings.companyName || 'PT. Samudra Asia Engineering' },
+          { id: 'companyAddress', param: 'Alamat Perusahaan', value: uiSettings.companyAddress || 'Jl. Raya Perjuangan No. 1, Kebon Jeruk, Jakarta Barat' },
           { id: 'hrdName', param: 'PEJABAT', value: uiSettings.hrdName || 'Bpk. Andi Setiawan' },
           { id: 'hrdTitle', param: 'JABATAN', value: uiSettings.hrdTitle || 'Head of HR & GA' }
         ]);
@@ -1714,6 +1914,10 @@
       const [regForm, setRegForm] = useState(initialRegForm); const [editIndex, setEditIndex] = useState(null);
       const [jabForm, setJabForm] = useState({ id: '', nama: '', atasan: '-' }); const [editJabIdx, setEditJabIdx] = useState(null);
       const [deptForm, setDeptForm] = useState({ id: '', nama: '' }); const [editDeptIdx, setEditDeptIdx] = useState(null);
+      
+      const { currentData: paginatedEmp, currentPage: pageEmp, maxPage: maxPageEmp, setCurrentPage: setPageEmp } = usePagination(globalEmployees, 25);
+      const { currentData: paginatedJab, currentPage: pageJab, maxPage: maxPageJab, setCurrentPage: setPageJab } = usePagination(globalJabatan, 25);
+      const { currentData: paginatedDept, currentPage: pageDept, maxPage: maxPageDept, setCurrentPage: setPageDept } = usePagination(globalDepartemen, 25);
 
       const [showExportModal, setShowExportModal] = useState(false);
       const employeeColumns = [ { key: 'id', label: 'ID Karyawan' }, { key: 'nama', label: 'Nama Karyawan' }, { key: 'jk', label: 'Jenis Kelamin' }, { key: 'phone', label: 'No HP' }, { key: 'tglGabung', label: 'Tgl Gabung' }, { key: 'tmpLahir', label: 'Tempat Lahir' }, { key: 'tglLahir', label: 'Tgl Lahir' }, { key: 'ktp', label: 'No KTP' }, { key: 'alamat', label: 'Alamat Lengkap' }, { key: 'pendidikan', label: 'Pendidikan' }, { key: 'role', label: 'Role Aplikasi' }, { key: 'dept', label: 'Departemen' }, { key: 'jabatan', label: 'Jabatan' }, { key: 'atasan', label: 'Atasan' }, { key: 'sisaCuti', label: 'Sisa Cuti' }, { key: 'gapok', label: 'Gaji Pokok' }, { key: 'tMakan', label: 'Tunj Makan' }, { key: 'tJabatan', label: 'Tunj Jabatan' }, { key: 'tTransport', label: 'Tunj Transportasi' }, { key: 'tThr', label: 'Tunj THR' }, { key: 'tKes', label: 'Tunj Kesehatan' }, { key: 'insentif', label: 'Insentif' }, { key: 'pAsuransi', label: 'Pot Asuransi' }, { key: 'pBpjsKs', label: 'Pot BPJS KS' }, { key: 'pBpjstk', label: 'Pot BPJSTK' }, { key: 'pPinjam', label: 'Pot Pinjaman' }, { key: 'pAbsen', label: 'Pot Absen' }, { key: 'pLain', label: 'Pot Lain' } ];
@@ -1782,12 +1986,12 @@
           </div>
 
           {subTab === 'data' && (
-            <GlassCard className="p-6 animate-fade-in-up">
+            <GlassCard className="p-6 animate-fade-in-up pb-2">
                <div className="flex justify-between items-center border-b border-black/5 pb-4 mb-4">
                   <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Tabel Data Karyawan</h3>
                   <div className="flex gap-2"><button onClick={() => setShowExportModal(true)} className="flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-600 dark:bg-fuchsia-400/10 dark:text-fuchsia-400 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-colors"><Download size={14}/> Ekspor</button><button onClick={() => { setRegForm(initialRegForm); setEditIndex(null); setSubTab('registrasi'); }} className="flex items-center gap-2 px-4 py-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl font-bold text-[10px] uppercase tracking-widest"><Plus size={14}/> Tambah</button></div>
                </div>
-               <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5 custom-scrollbar pb-3 max-w-[calc(100vw-2rem)] md:max-w-none relative">
+               <div className="overflow-x-auto rounded-t-xl border border-b-0 border-black/5 dark:border-white/5 custom-scrollbar max-w-[calc(100vw-2rem)] md:max-w-none relative">
                  <table className="w-full text-left whitespace-nowrap text-[10px] min-w-[max-content] border-collapse">
                     <thead className="bg-white/60 dark:bg-[#0A1128]/90 text-gray-500 uppercase tracking-widest shadow-sm">
                       <tr>
@@ -1796,8 +2000,10 @@
                       </tr>
                     </thead>
                     <tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {globalEmployees.map((emp, i) => (
-                        <tr key={i} className="border-b border-black/5 dark:border-white/5 hover:bg-[#0070BA]/5 transition-colors">
+                      {paginatedEmp.map((emp, j) => {
+                        const i = globalEmployees.findIndex(e => e.id === emp.id);
+                        return(
+                        <tr key={j} className="border-b border-black/5 dark:border-white/5 hover:bg-[#0070BA]/5 transition-colors">
                           {employeeColumns.map(c => {
                               let val = emp[c.key];
                               if (c.key === 'gapok' || c.key === 'tMakan' || c.key === 'tJabatan' || c.key === 'tTransport' || c.key === 'tThr' || c.key === 'tKes' || c.key === 'insentif' || c.key.startsWith('pA') || c.key.startsWith('pB') || c.key.startsWith('pP') || c.key.startsWith('pL')) {
@@ -1813,10 +2019,11 @@
                              </div>
                           </td>
                         </tr>
-                      ))}
+                      )})}
                     </tbody>
                  </table>
                </div>
+               <PaginationControls currentPage={pageEmp} totalPages={maxPageEmp} onPageChange={setPageEmp} />
             </GlassCard>
           )}
 
@@ -1858,7 +2065,7 @@
 
           {subTab === 'jabatan' && (
             <div className="space-y-4 animate-fade-in-up">
-              <GlassCard className="p-6">
+              <GlassCard className="p-6 pb-2">
                 <div className="flex justify-between items-center border-b border-black/5 pb-4 mb-4">
                   <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Data Jabatan</h3>
                   <div className="flex gap-2 items-center">
@@ -1870,10 +2077,12 @@
                      )}
                   </div>
                 </div>
-                <div className="overflow-x-auto rounded-xl border border-black/5">
+                <div className="overflow-x-auto rounded-t-xl border border-b-0 border-black/5">
                    <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Kode</th><th className="p-4">Nama Jabatan</th><th className="p-4">Atasan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                        {globalJabatan.map((jab, i) => (
-                          <tr key={i} className="border-b border-black/5 hover:bg-white/5">
+                        {paginatedJab.map((jab, j) => {
+                          const i = globalJabatan.findIndex(x => x.id === jab.id);
+                          return (
+                          <tr key={j} className="border-b border-black/5 hover:bg-white/5">
                             <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{editJabIdx === i ? <input type="text" value={jabForm.id} onChange={e=>setJabForm({...jabForm, id:e.target.value})} className="w-16 bg-transparent border-b border-[#0070BA] outline-none" autoFocus /> : jab.id}</td>
                             <td className="p-4">{editJabIdx === i ? <input type="text" value={jabForm.nama} onChange={e=>setJabForm({...jabForm, nama:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : jab.nama}</td>
                             <td className="p-4 opacity-70">{editJabIdx === i ? <select value={jabForm.atasan} onChange={e=>setJabForm({...jabForm, atasan:e.target.value})} className="w-full bg-white/50 dark:bg-[#0A1128]/80 outline-none text-[#134E4A] dark:text-white rounded"><option value="-">-</option>{globalJabatan.map(j=><option key={j.id} value={j.nama}>{j.nama}</option>)}</select> : jab.atasan}</td>
@@ -1883,15 +2092,16 @@
                               </div>
                             </td>
                           </tr>
-                        ))}
+                        )})}
                       </tbody></table>
                 </div>
+                <PaginationControls currentPage={pageJab} totalPages={maxPageJab} onPageChange={setPageJab} />
               </GlassCard>
             </div>
           )}
 
           {subTab === 'departemen' && (
-            <GlassCard className="p-6 animate-fade-in-up">
+            <GlassCard className="p-6 animate-fade-in-up pb-2">
               <div className="flex justify-between items-center border-b border-black/5 pb-4 mb-4">
                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Data Departemen</h3>
                 <div className="flex gap-2 items-center">
@@ -1903,10 +2113,12 @@
                    )}
                 </div>
               </div>
-              <div className="overflow-x-auto rounded-xl border border-black/5">
+              <div className="overflow-x-auto rounded-t-xl border border-b-0 border-black/5">
                  <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4 w-1/3">Kode Dept</th><th className="p-4">Nama Departemen</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {globalDepartemen.map((dept, i) => (
-                        <tr key={i} className="border-b border-black/5 hover:bg-white/5">
+                      {paginatedDept.map((dept, j) => {
+                        const i = globalDepartemen.findIndex(x => x.id === dept.id);
+                        return (
+                        <tr key={j} className="border-b border-black/5 hover:bg-white/5">
                           <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{editDeptIdx === i ? <input type="text" value={deptForm.id} onChange={e=>setDeptForm({...deptForm, id:e.target.value})} className="w-20 bg-transparent border-b border-[#0070BA] outline-none" autoFocus /> : dept.id}</td>
                           <td className="p-4">{editDeptIdx === i ? <input type="text" value={deptForm.nama} onChange={e=>setDeptForm({...deptForm, nama:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : dept.nama}</td>
                           <td className="p-4 align-middle">
@@ -1915,9 +2127,10 @@
                              </div>
                           </td>
                         </tr>
-                      ))}
+                      )})}
                     </tbody></table>
               </div>
+              <PaginationControls currentPage={pageDept} totalPages={maxPageDept} onPageChange={setPageDept} />
             </GlassCard>
           )}
         </div>
@@ -1931,6 +2144,9 @@
       const [attendancePolicyForm, setAttendancePolicyForm] = useState({ maxCheckInEarly: globalAttendancePolicy.maxCheckInEarly || 240, minCheckOutEarly: globalAttendancePolicy.minCheckOutEarly || 299, lemburStart: globalAttendancePolicy.lemburStart || 90 });
       const [editLbrIdx, setEditLbrIdx] = useState(null); const [lbrForm, setLbrForm] = useState({ rule: '', formula: '' });
       const [editLibIdx, setEditLibIdx] = useState(null); const [libForm, setLibForm] = useState({ date: '', desc: '' });
+      
+      const { currentData: paginatedJadwal, currentPage: pageJdw, maxPage: maxPageJdw, setCurrentPage: setPageJdw } = usePagination(globalJadwal, 25);
+      const { currentData: paginatedLibur, currentPage: pageLib, maxPage: maxPageLib, setCurrentPage: setPageLib } = usePagination(globalLibur, 25);
 
       return (
         <div className="space-y-4 animate-fade-in-up">
@@ -1947,14 +2163,16 @@
           </div>
 
           {subTab === 'jadwal' && (
-            <GlassCard className="p-4 md:p-6 space-y-4">
+            <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
                <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
                  <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan Jam Kerja</h3>
                  <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { setGlobalJadwal([{ id: Date.now(), dept: '', hari: '', in: '', out: '' }, ...globalJadwal]); setEditJdwIdx(0); setJdwForm({ dept: '', hari: '', in: '', out: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
                </div>
-               <div className="overflow-x-auto custom-scrollbar rounded-xl border border-[#0070BA]/10">
+               <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
                  <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Departemen</th><th className="p-4">Hari Kerja</th><th className="p-4">Jam Masuk</th><th className="p-4">Jam Keluar</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {globalJadwal.map((row, i) => (
+                      {paginatedJadwal.map((row, j) => {
+                        const i = globalJadwal.findIndex(x => x.id === row.id);
+                        return(
                         <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
                           <td className="p-4">{editJdwIdx===i ? <input type="text" value={jdwForm.dept} onChange={e=>setJdwForm({...jdwForm, dept: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" autoFocus/> : row.dept}</td>
                           <td className="p-4 text-gray-500">{editJdwIdx===i ? <input type="text" value={jdwForm.hari} onChange={e=>setJdwForm({...jdwForm, hari: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none"/> : row.hari}</td>
@@ -1966,9 +2184,10 @@
                              </div>
                           </td>
                         </tr>
-                      ))}
+                      )})}
                     </tbody></table>
                </div>
+               <PaginationControls currentPage={pageJdw} totalPages={maxPageJdw} onPageChange={setPageJdw} />
             </GlassCard>
           )}
 
@@ -1991,178 +2210,123 @@
                   </div>
                </div>
                <div className="text-[10px] md:text-xs font-bold text-gray-500 bg-white/40 dark:bg-[#0A1128]/50 p-4 rounded-xl border border-amber-500/20">
-                  <p className="text-amber-600 dark:text-amber-400 mb-1">Catatan Perhitungan:</p>
-                  <ul className="list-disc pl-4 space-y-1">
-                     <li>Jika Check-in lebih dari <strong>{uangMakanForm.toleransi} menit</strong> dari jam masuk + toleransi, uang makan harian dipotong <strong>{uangMakanForm.potTelat}%</strong>.</li>
-                     <li>Jika Check-in lebih dari <strong>{uangMakanForm.hangus} menit</strong>, atau status absen adalah Sakit/Absen/Cuti, uang makan harian <strong>hangus (100% dipotong)</strong>.</li>
-                     <li>Untuk status Alfa/Absen tanpa keterangan, potongan akan diakumulasi per hari dan masuk ke struk Potongan Absen di Slip Gaji.</li>
-                  </ul>
+                  <p>{uangMakanForm.keterangan}</p>
                </div>
             </GlassCard>
           )}
 
           {subTab === 'lembur' && (
-            <GlassCard className="p-5 md:p-8 space-y-6">
-               <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan & Persetujuan Lembur</h3>
-               </div>
-               <div className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white bg-purple-50 dark:bg-purple-900/10 p-5 rounded-2xl border border-purple-500/20 leading-relaxed shadow-sm">
-                  <p className="text-purple-600 dark:text-fuchsia-400 mb-3 text-sm font-black uppercase tracking-widest">Ketentuan Baku Perhitungan Upah Lembur:</p>
-                  <ul className="list-disc pl-5 space-y-2">
-                     <li>Perhitungan jam lembur dimulai <strong>setelah 90 menit</strong> dari jadwal jam pulang karyawan.</li>
-                     <li>Upah lembur <strong>tidak otomatis dihitung</strong> dan tidak muncul di rekap jika tidak ada <strong>Persetujuan (Approval)</strong> dari atasan masing-masing atau HRD pada Modul Pengajuan Izin (Kategori Lembur).</li>
-                     <li>Formula perhitungan <strong>Upah Lembur Per Jam = Gaji Pokok x (1 / 173)</strong>.</li>
-                     <li>Uang lembur <strong>Jam Pertama</strong> dikalikan dengan <strong>1.5</strong>.</li>
-                     <li>Uang lembur <strong>Jam Kedua dan seterusnya</strong> dikalikan dengan <strong>2</strong>.</li>
-                     <li>Untuk perhitungan diluar jadwal operasional jam kerja (Sabtu / Minggu / Libur Nasional) akan dihitung secara manual dan terpisah per jam.</li>
-                  </ul>
-               </div>
-            </GlassCard>
+             <GlassCard className="p-4 md:p-6 space-y-4">
+                <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
+                  <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Parameter Lembur</h3>
+                  <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button></div>
+                </div>
+                <div className="overflow-x-auto custom-scrollbar rounded-xl border border-[#0070BA]/10">
+                   <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Rule</th><th className="p-4">Formula</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
+                      {globalLembur.map((row, i) => (
+                         <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
+                           <td className="p-4">{editLbrIdx===i ? <input type="text" value={lbrForm.rule} onChange={e=>setLbrForm({...lbrForm, rule:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : row.rule}</td>
+                           <td className="p-4">{editLbrIdx===i ? <input type="text" value={lbrForm.formula} onChange={e=>setLbrForm({...lbrForm, formula:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : row.formula}</td>
+                           <td className="p-4 align-middle"><div className="flex justify-center w-full">{editLbrIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalLembur];up[i]={...row,...lbrForm};setGlobalLembur(up);setEditLbrIdx(null);simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditLbrIdx(i);setLbrForm(row);}} />}</div></td>
+                         </tr>
+                      ))}
+                   </tbody></table>
+                </div>
+             </GlassCard>
           )}
 
           {subTab === 'libur' && (
-            <GlassCard className="p-5 md:p-6 space-y-4">
-               <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Libur Nasional</h3>
-                 <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Tabel"><Save size={16} /></button><button onClick={() => { setGlobalLibur([{ id: Date.now(), date: '', desc: '' }, ...globalLibur]); setEditLibIdx(0); setLibForm({ date: '', desc: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] rounded-xl"><Plus size={16} /></button></div>
-               </div>
-               <div className="overflow-x-auto rounded-xl border border-white/10">
-                 <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Tanggal</th><th className="p-4">Keterangan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {globalLibur.map((row, i) => (
-                        <tr key={row.id} className="border-b hover:bg-white/5">
-                          <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{editLibIdx===i ? <input type="date" value={libForm.date} onChange={e=>setLibForm({...libForm, date: e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" autoFocus/> : formatIndoDate(row.date)}</td>
-                          <td className="p-4">{editLibIdx===i ? <input type="text" value={libForm.desc} onChange={e=>setLibForm({...libForm, desc: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none"/> : row.desc}</td>
-                          <td className="p-4 align-middle">
-                             <div className="flex justify-center w-full">
-                                {editLibIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalLibur]; up[i]={...row, ...libForm}; setGlobalLibur(up); setEditLibIdx(null); simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={()=>setEditLibIdx(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditLibIdx(i); setLibForm(row);}} onDelete={() => { setGlobalLibur(globalLibur.filter((_,idx)=>idx!==i)); simulateAutoSave(); }} />}
-                             </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody></table>
-               </div>
-            </GlassCard>
+             <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
+                <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
+                  <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Libur Nasional</h3>
+                  <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { setGlobalLibur([{ id: Date.now(), date: '', desc: '' }, ...globalLibur]); setEditLibIdx(0); setLibForm({ date: '', desc: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
+                </div>
+                <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
+                   <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Tanggal</th><th className="p-4">Keterangan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
+                      {paginatedLibur.map((row, j) => {
+                        const i = globalLibur.findIndex(x => x.id === row.id);
+                        return(
+                         <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
+                           <td className="p-4">{editLibIdx===i ? <input type="date" value={libForm.date} onChange={e=>setLibForm({...libForm, date:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : formatIndoDate(row.date)}</td>
+                           <td className="p-4">{editLibIdx===i ? <input type="text" value={libForm.desc} onChange={e=>setLibForm({...libForm, desc:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.desc}</td>
+                           <td className="p-4 align-middle"><div className="flex justify-center w-full">{editLibIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalLibur];up[i]={...row,...libForm};setGlobalLibur(up);setEditLibIdx(null);simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditLibIdx(i);setLibForm(row);}} onDelete={()=>{setGlobalLibur(globalLibur.filter((_,idx)=>idx!==i));simulateAutoSave();}} />}</div></td>
+                         </tr>
+                      )})}
+                   </tbody></table>
+                </div>
+                <PaginationControls currentPage={pageLib} totalPages={maxPageLib} onPageChange={setPageLib} />
+             </GlassCard>
           )}
         </div>
       );
     }
 
     function TabCuti({ simulateAutoSave, globalKebijakanCuti, setGlobalKebijakanCuti, globalCutiBersama, setGlobalCutiBersama, globalEmployees, setGlobalEmployees }) {
-      const [cbForm, setCbForm] = useState({ tglMulai: '', tglSelesai: '', desc: '' });
-      const [cbEditIndex, setCbEditIndex] = useState(null);
-
-      const handleSaveCutiBersama = (i) => {
-        if(!cbForm.tglMulai || !cbForm.tglSelesai || !cbForm.desc) return alert("Lengkapi data cuti bersama!");
-        const days = Math.ceil((new Date(cbForm.tglSelesai) - new Date(cbForm.tglMulai)) / (1000 * 60 * 60 * 24)) + 1;
-        if (days < 1) return alert("Tanggal selesai harus lebih besar dari tanggal mulai!");
-
-        const updatedCb = [...globalCutiBersama]; const oldDays = updatedCb[i].hari;
-        updatedCb[i] = { tglMulai: cbForm.tglMulai, tglSelesai: cbForm.tglSelesai, hari: days, desc: cbForm.desc };
-        setGlobalCutiBersama(updatedCb);
-        
-        if (days !== oldDays) {
-           const diff = days - oldDays; const updatedEmps = globalEmployees.map(emp => ({...emp, sisaCuti: emp.sisaCuti - diff}));
-           setGlobalEmployees(updatedEmps);
-        }
-        setCbForm({ tglMulai: '', tglSelesai: '', desc: '' }); setCbEditIndex(null); simulateAutoSave();
-      };
-
-      const deleteCutiBersama = (index) => {
-         const toDelete = globalCutiBersama[index];
-         if(toDelete.hari > 0 && window.confirm(`Membatalkan cuti bersama ini akan mengembalikan saldo cuti seluruh karyawan sebanyak ${toDelete.hari} hari. Lanjutkan?`)){
-           setGlobalCutiBersama(globalCutiBersama.filter((_, i) => i !== index));
-           const updatedEmps = globalEmployees.map(emp => ({...emp, sisaCuti: emp.sisaCuti + toDelete.hari}));
-           setGlobalEmployees(updatedEmps); simulateAutoSave();
-         } else { setGlobalCutiBersama(globalCutiBersama.filter((_, i) => i !== index)); simulateAutoSave(); }
-      }
+      const [cutiForm, setCutiForm] = useState(globalKebijakanCuti);
+      const [editCbIdx, setEditCbIdx] = useState(null); const [cbForm, setCbForm] = useState({ tglMulai: '', tglSelesai: '', hari: 0, desc: '' });
+      const { currentData: paginatedCb, currentPage: pageCb, maxPage: maxPageCb, setCurrentPage: setPageCb } = usePagination(globalCutiBersama, 25);
 
       return (
-        <div className="space-y-6">
-          <GlassCard className="p-6 space-y-4 animate-fade-in-up">
-             <div className="flex justify-between items-center border-b border-black/5 pb-4 mb-4"><h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Kebijakan Cuti Global</h3><button onClick={simulateAutoSave} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Save size={16} /></button></div>
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/20 dark:bg-black/20 p-5 rounded-2xl border border-black/5">
-                <div className="space-y-4">
-                  <InputGroup label="Mulai Periode Cuti" type="date" value={globalKebijakanCuti.tglMulai} onChange={e => {setGlobalKebijakanCuti({...globalKebijakanCuti, tglMulai: e.target.value}); simulateAutoSave();}} />
-                  <InputGroup label="Akhir Periode Cuti (Hangus)" type="date" value={globalKebijakanCuti.tglSelesai} onChange={e => {setGlobalKebijakanCuti({...globalKebijakanCuti, tglSelesai: e.target.value}); simulateAutoSave();}} />
-                </div>
-                <div className="space-y-6 flex flex-col justify-center">
-                  <label className="flex items-center gap-3 cursor-pointer group">
-                    <div onClick={() => {setGlobalKebijakanCuti({...globalKebijakanCuti, prorata: !globalKebijakanCuti.prorata}); simulateAutoSave();}}>{globalKebijakanCuti.prorata ? <CheckSquare size={24} className="text-teal-500" /> : <XCircle size={24} className="text-gray-400" />}</div>
-                    <div className="flex flex-col"><span className="text-[10px] font-bold text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest">Prorata Karyawan Baru</span><span className="text-[9px] text-gray-500">Hitung proporsional jika masa kerja &lt; 1 tahun</span></div>
-                  </label>
-                  <label className="flex items-center gap-3 cursor-pointer group">
-                    <div onClick={() => {setGlobalKebijakanCuti({...globalKebijakanCuti, minus: !globalKebijakanCuti.minus}); simulateAutoSave();}}>{globalKebijakanCuti.minus ? <CheckSquare size={24} className="text-rose-500" /> : <XCircle size={24} className="text-gray-400" />}</div>
-                    <div className="flex flex-col"><span className="text-[10px] font-bold text-[#0070BA] dark:text-[#00F0FF] uppercase tracking-widest">Izinkan Saldo Minus</span><span className="text-[9px] text-gray-500">Kelebihan cuti memotong jatah tahun depan</span></div>
-                  </label>
-                </div>
-             </div>
-          </GlassCard>
-
-          <GlassCard className="p-6 space-y-4 animate-fade-in-up">
-              <div className="flex justify-between items-center border-b border-black/5 pb-4 mb-4">
-                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Jadwal Cuti Bersama</h3>
-                 <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Tabel"><Save size={16} /></button><button onClick={() => { setGlobalCutiBersama([{ id: Date.now(), tglMulai: '', tglSelesai: '', hari: 0, desc: '' }, ...globalCutiBersama]); setCbEditIndex(0); setCbForm({ tglMulai: '', tglSelesai: '', desc: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] rounded-xl border border-[#0070BA]/20"><Plus size={16} /></button></div>
+        <div className="space-y-4 md:space-y-6 animate-fade-in-up">
+           <GlassCard className="p-5 md:p-8 space-y-6">
+              <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
+                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Kebijakan Cuti Tahunan</h3>
+                 <Button variant="primary" className="py-2 px-4 h-auto" onClick={() => { setGlobalKebijakanCuti(cutiForm); simulateAutoSave(); }} icon={Save}>Simpan Aturan</Button>
               </div>
-              <div className="overflow-x-auto rounded-xl border border-black/5">
-                 <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Tgl Mulai</th><th className="p-4">Tgl Selesai</th><th className="p-4">Jumlah Hari</th><th className="p-4 w-1/3">Keterangan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {globalCutiBersama.map((cb, i) => (
-                        <tr key={cb.id || i} className="border-b border-black/5 hover:bg-white/5">
-                          <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{cbEditIndex === i ? <input type="date" value={cbForm.tglMulai} onChange={e=>setCbForm({...cbForm, tglMulai: e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" autoFocus/> : formatIndoDate(cb.tglMulai)}</td>
-                          <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{cbEditIndex === i ? <input type="date" value={cbForm.tglSelesai} onChange={e=>setCbForm({...cbForm, tglSelesai: e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none"/> : formatIndoDate(cb.tglSelesai)}</td>
-                          <td className="p-4 text-rose-500">- {cbEditIndex === i ? '?' : cb.hari} Hari</td>
-                          <td className="p-4 opacity-70">{cbEditIndex === i ? <input type="text" value={cbForm.desc} onChange={e=>setCbForm({...cbForm, desc: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none"/> : cb.desc}</td>
-                          <td className="p-4 align-middle">
-                             <div className="flex justify-center w-full">
-                                {cbEditIndex === i ? <div className="flex gap-2"><button onClick={() => handleSaveCutiBersama(i)} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={() => {if(cb.hari===0)deleteCutiBersama(i); setCbEditIndex(null);}} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div> : <ActionButtons onEdit={() => { setCbEditIndex(i); setCbForm(cb); }} onDelete={() => deleteCutiBersama(i)} />}
-                             </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {globalCutiBersama.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-gray-500 font-bold uppercase text-[10px]">Belum ada data</td></tr>}
-                    </tbody></table>
-               </div>
-          </GlassCard>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/20 dark:bg-black/20 p-5 rounded-2xl border border-black/5">
+                 <InputGroup label="Tgl Mulai Periode" type="date" value={cutiForm.tglMulai} onChange={e=>setCutiForm({...cutiForm, tglMulai: e.target.value})} />
+                 <InputGroup label="Tgl Selesai Periode" type="date" value={cutiForm.tglSelesai} onChange={e=>setCutiForm({...cutiForm, tglSelesai: e.target.value})} />
+                 <div className="flex items-center gap-2 mt-4"><input type="checkbox" checked={cutiForm.prorata} onChange={e=>setCutiForm({...cutiForm, prorata: e.target.checked})} className="w-4 h-4 accent-[#0070BA] cursor-pointer" /><label className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white uppercase tracking-widest">Prorata Karyawan Baru</label></div>
+                 <div className="flex items-center gap-2 mt-4"><input type="checkbox" checked={cutiForm.minus} onChange={e=>setCutiForm({...cutiForm, minus: e.target.checked})} className="w-4 h-4 accent-[#0070BA] cursor-pointer" /><label className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white uppercase tracking-widest">Boleh Minus (Hutang Cuti)</label></div>
+              </div>
+           </GlassCard>
+
+           <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
+              <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
+                <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Cuti Bersama</h3>
+                <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { setGlobalCutiBersama([{ id: Date.now(), tglMulai: '', tglSelesai: '', hari: 0, desc: '' }, ...globalCutiBersama]); setEditCbIdx(0); setCbForm({ tglMulai: '', tglSelesai: '', hari: 0, desc: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
+              </div>
+              <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
+                 <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Tgl Mulai</th><th className="p-4">Tgl Selesai</th><th className="p-4">Jml Hari</th><th className="p-4">Keterangan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
+                    {paginatedCb.map((row, j) => {
+                       const i = globalCutiBersama.findIndex(x => x.id === row.id);
+                       return (
+                       <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
+                         <td className="p-4">{editCbIdx===i ? <input type="date" value={cbForm.tglMulai} onChange={e=>setCbForm({...cbForm, tglMulai:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : formatIndoDate(row.tglMulai)}</td>
+                         <td className="p-4">{editCbIdx===i ? <input type="date" value={cbForm.tglSelesai} onChange={e=>setCbForm({...cbForm, tglSelesai:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : formatIndoDate(row.tglSelesai)}</td>
+                         <td className="p-4">{editCbIdx===i ? <input type="number" value={cbForm.hari} onChange={e=>setCbForm({...cbForm, hari:parseInt(e.target.value)||0})} className="w-16 bg-transparent border-b border-[#0070BA] outline-none" /> : row.hari}</td>
+                         <td className="p-4">{editCbIdx===i ? <input type="text" value={cbForm.desc} onChange={e=>setCbForm({...cbForm, desc:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.desc}</td>
+                         <td className="p-4 align-middle"><div className="flex justify-center w-full">{editCbIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalCutiBersama];up[i]={...row,...cbForm};setGlobalCutiBersama(up);setEditCbIdx(null);simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditCbIdx(i);setCbForm(row);}} onDelete={()=>{setGlobalCutiBersama(globalCutiBersama.filter((_,idx)=>idx!==i));simulateAutoSave();}} />}</div></td>
+                       </tr>
+                    )})}
+                 </tbody></table>
+              </div>
+              <PaginationControls currentPage={pageCb} totalPages={maxPageCb} onPageChange={setPageCb} />
+           </GlassCard>
         </div>
       );
     }
 
     function TabAkses({ simulateAutoSave, matrixData, setMatrixData, passData, setPassData }) {
-      const [editingModId, setEditingModId] = useState(null); const [modName, setModName] = useState("");
-      const toggleMatrix = (id, role) => { setMatrixData(matrixData.map(m => m.id === id ? { ...m, [role]: !m[role] } : m)); simulateAutoSave(); };
-      const [passForm, setPassForm] = useState({ id: '', level: '', nama: '', user: '', pass: '' }); const [editPassId, setEditPassId] = useState(null);
-
-      const mxCols = ['u','s','m','t','a'];
+      const [editPassId, setEditPassId] = useState(null);
+      const [passForm, setPassForm] = useState({ level: '', nama: '', user: '', pass: '' });
+      const { currentData: paginatedPass, currentPage: pagePass, maxPage: maxPagePass, setCurrentPage: setPagePass } = usePagination(passData, 25);
 
       return (
-        <div className="space-y-6">
-          <GlassCard className="p-6">
-            <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-4 mb-4"><h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Matriks Otorisasi Akses Modul</h3><div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl"><Save size={16} /></button><button onClick={() => { const newId = Date.now(); setMatrixData([{ id: newId, mod: 'Modul Baru', u: false, s: false, m: false, t: false, a: false }, ...matrixData]); setEditingModId(newId); setModName('Modul Baru'); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] rounded-xl"><Plus size={16} /></button></div></div>
-            <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5 custom-scrollbar">
-              <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] uppercase tracking-wider text-gray-500"><tr><th className="p-4 sticky left-0 z-10 bg-white/90 dark:bg-[#0A1128]">Nama Modul / Fitur</th><th className="p-4 text-center">User</th><th className="p-4 text-center">Supervisor</th><th className="p-4 text-center">Manager</th><th className="p-4 text-center">Top Man.</th><th className="p-4 text-center text-[#0070BA] dark:text-[#00F0FF]">Admin</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                    {matrixData.map((row) => (
-                      <tr key={row.id} className="border-b border-black/5 dark:border-white/5 hover:bg-white/5">
-                        <td className="p-4 sticky left-0 z-10 bg-white/90 dark:bg-[#0A1128] border-r border-black/5 opacity-80">{editingModId === row.id ? (<input type="text" value={modName} onChange={(e) => setModName(e.target.value)} className="w-full bg-transparent border-b border-[#0070BA] outline-none" autoFocus />) : row.mod}</td>
-                        {mxCols.map(c => <td key={c} className="p-4 text-center cursor-pointer" onClick={() => toggleMatrix(row.id, c)}>{row[c] ? <CheckCircle size={16} className="mx-auto text-teal-500 hover:scale-125 transition-transform" /> : <XCircle size={16} className="mx-auto text-rose-300 opacity-50" />}</td>)}
-                        <td className="p-4 align-middle">
-                           <div className="flex justify-center w-full">
-                              {editingModId === row.id ? (<div className="flex gap-2"><button onClick={() => { setMatrixData(matrixData.map(m => m.id === row.id ? {...m, mod: modName} : m)); setEditingModId(null); simulateAutoSave(); }} className="p-1.5 bg-teal-100 text-teal-600 rounded hover:bg-teal-200 transition-colors" title="Simpan"><Check size={14}/></button><button onClick={() => setEditingModId(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded hover:bg-rose-200 transition-colors" title="Batal"><XCircle size={14}/></button></div>) : (<ActionButtons onEdit={() => { setEditingModId(row.id); setModName(row.mod); }} onDelete={() => { setMatrixData(matrixData.filter(m => m.id !== row.id)); simulateAutoSave(); }} />)}
-                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody></table>
+        <div className="space-y-4 md:space-y-6 animate-fade-in-up">
+          <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
+            <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
+              <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan Password Login</h3>
+              <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { const newId = Date.now(); setPassData([{ id: newId, level: 'User', nama: '', user: '', pass: '' }, ...passData]); setEditPassId(newId); setPassForm({ level: 'User', nama: '', user: '', pass: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
             </div>
-          </GlassCard>
-          <GlassCard className="p-6">
-            <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-4 mb-4"><h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Informasi Default Password</h3><div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl"><Save size={16} /></button><button onClick={() => { setPassData([{ id: Date.now(), level: '', nama: '', user: '', pass: '' }, ...passData]); setEditPassId(Date.now()); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] rounded-xl"><Plus size={16} /></button></div></div>
-            <div className="overflow-x-auto rounded-xl border border-black/5 dark:border-white/5 custom-scrollbar">
-               <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] uppercase tracking-wider text-gray-500"><tr><th className="p-4">Level / Role Akses</th><th className="p-4">Nama Karyawan</th><th className="p-4">Username Login</th><th className="p-4">Password Default</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                     {passData.map((row) => (
-                        <tr key={row.id} className="border-b border-black/5 dark:border-white/5 hover:bg-white/5">
-                           <td className="p-4 text-[#0070BA] dark:text-[#00F0FF]">{editPassId === row.id ? <input type="text" value={passForm.level} onChange={e=>setPassForm({...passForm, level: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" autoFocus /> : row.level}</td>
-                           <td className="p-4 font-mono opacity-80">{editPassId === row.id ? <input type="text" value={passForm.nama} onChange={e=>setPassForm({...passForm, nama: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.nama}</td>
-                           <td className="p-4 font-mono opacity-80">{editPassId === row.id ? <input type="text" value={passForm.user} onChange={e=>setPassForm({...passForm, user: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.user}</td>
-                           <td className="p-4 font-mono text-teal-600 dark:text-teal-400">{editPassId === row.id ? <input type="text" value={passForm.pass} onChange={e=>setPassForm({...passForm, pass: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.pass}</td>
+            <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
+               <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Level Akses</th><th className="p-4">Nama</th><th className="p-4">ID/Username</th><th className="p-4">Password</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
+                     {paginatedPass.map((row) => (
+                        <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
+                           <td className="p-4">{editPassId === row.id ? <select value={passForm.level} onChange={e=>setPassForm({...passForm, level: e.target.value})} className="bg-white/50 dark:bg-[#0A1128]/80 outline-none rounded"><option value="User">User</option><option value="Admin">Admin</option><option value="Top">Pimpinan</option></select> : row.level}</td>
+                           <td className="p-4">{editPassId === row.id ? <input type="text" value={passForm.nama} onChange={e=>setPassForm({...passForm, nama: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.nama}</td>
+                           <td className="p-4">{editPassId === row.id ? <input type="text" value={passForm.user} onChange={e=>setPassForm({...passForm, user: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.user}</td>
+                           <td className="p-4 font-mono text-amber-500">{editPassId === row.id ? <input type="text" value={passForm.pass} onChange={e=>setPassForm({...passForm, pass: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.pass}</td>
                            <td className="p-4 align-middle">
                               <div className="flex justify-center w-full">
                                  {editPassId === row.id ? (<div className="flex gap-2"><button onClick={()=>{ setPassData(passData.map(p => p.id === row.id ? {...passForm, id: row.id} : p)); setEditPassId(null); simulateAutoSave(); }} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={()=>setEditPassId(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div>) : (<ActionButtons onEdit={() => { setEditPassId(row.id); setPassForm(row); }} onDelete={() => { setPassData(passData.filter(p => p.id !== row.id)); simulateAutoSave(); }} />)}
@@ -2173,6 +2337,7 @@
                      {passData.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-gray-500 font-bold uppercase text-[10px]">Data kosong</td></tr>}
                   </tbody></table>
             </div>
+            <PaginationControls currentPage={pagePass} totalPages={maxPagePass} onPageChange={setPagePass} />
           </GlassCard>
         </div>
       );

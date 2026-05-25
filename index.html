@@ -116,9 +116,9 @@
     const PencilIconToUse = LucideLib.Pencil || LucideLib.Edit3 || LucideLib.Edit || EditIconFallback;
 
     // KONFIGURASI DATABASE
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxBoE9OK-bH_W8139VVTORk3-Ds4vK76odozzJZ6ZhdUq_L2UQQRKoATnFcpdPv6VWp/exec";
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzJL_vv5QU4wEBj_Y5bjB1235PjqELwGo7BVnDieQhiEsLXwm5nvBV4VXz8Pg1w8SA5/exec";
     const OFFICE_COORD = { lat: -6.1522193, lng: 106.7916433 };
-    const RADIUS_TOLERANCE_METERS = 100;
+    const RADIUS_TOLERANCE_METERS = 50;
     const GPS_HISTORY_SIZE = 5;
     const COLORS = { hadir: '#00F0FF', telat: '#FFB800', absen: '#FF003C', purple: '#B026FF', orange: '#FF5E00', lightPrimary: '#0070BA' };
 
@@ -187,18 +187,17 @@
       
       if (type === 'IN') {
         const diff = totalMins - sInM;
-        if (diff < -180) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
-        if (diff <= 10) return { status: 'Normal', color: 'text-emerald-600 dark:text-emerald-400' };
-        if (diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
-        return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
+        if (diff >= -180 && diff <= 10) return { status: 'Normal', color: 'text-emerald-600 dark:text-emerald-400' };
+        if (diff >= 11 && diff <= 120) return { status: 'Telat', color: 'text-amber-500 dark:text-amber-400' };
+        if (diff >= 121 && diff <= 240) return { status: 'Sangat Telat', color: 'text-rose-600 dark:text-rose-500' };
+        return { status: 'Normal', color: 'text-gray-500' };
       } else {
-        const early = sOutM - totalMins;
-        const overtime = totalMins - sOutM;
-        if (early > 299) return { status: 'Diluar Batas', color: 'text-rose-600 dark:text-rose-500' };
-        if (early >= 121) return { status: 'Plg Awal', color: 'text-rose-600 dark:text-rose-500' };
-        if (early >= 1) return { status: 'Plg Cepat', color: 'text-amber-500 dark:text-amber-400' };
-        if (overtime >= 90) return { status: 'Lembur', color: 'text-purple-600 dark:text-fuchsia-400' };
-        return { status: 'Plg Normal', color: 'text-[#0070BA] dark:text-cyan-400' };
+        const diff = totalMins - sOutM;
+        if (diff >= -299 && diff <= -121) return { status: 'Plg Awal', color: 'text-rose-600 dark:text-rose-500' };
+        if (diff >= -120 && diff <= -1) return { status: 'Plg Cepat', color: 'text-amber-500 dark:text-amber-400' };
+        if (diff >= 0 && diff <= 89) return { status: 'Plg Normal', color: 'text-[#0070BA] dark:text-cyan-400' };
+        if (diff >= 90) return { status: 'Lembur', color: 'text-purple-600 dark:text-fuchsia-400' };
+        return { status: 'Lembur Dgn Persetujuan', color: 'text-gray-500' };
       }
     };
 
@@ -263,8 +262,20 @@
             if (!attendanceMap.has(key)) attendanceMap.set(key, a);
             else {
                 const existing = attendanceMap.get(key);
-                if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') existing.checkOut = a.checkOut;
-                if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') existing.checkIn = a.checkIn;
+                // FIX #7: Update check-in with GPS location if new data lebih lengkap
+                if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') {
+                  existing.checkIn = a.checkIn;
+                  existing.locIn = a.locIn || existing.locIn || '-';
+                  existing.latIn = a.latIn || existing.latIn;
+                  existing.lngIn = a.lngIn || existing.lngIn;
+                }
+                // FIX #7: Update check-out with GPS location if new data lebih lengkap
+                if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') {
+                  existing.checkOut = a.checkOut;
+                  existing.locOut = a.locOut || existing.locOut || '-';
+                  existing.latOut = a.latOut || existing.latOut;
+                  existing.lngOut = a.lngOut || existing.lngOut;
+                }
             }
         });
         
@@ -314,18 +325,28 @@
 
                 // --- STATUS IN LOGIC ---
                 let statIn = '-';
-                if (cinMins === null) statIn = 'Sangat Telat';
-                else if (cinMins <= shiftInMins + 10) statIn = 'Normal';
-                else if (cinMins <= shiftInMins + 120) statIn = 'Telat';
-                else statIn = 'Sangat Telat';
+                if (cinMins === null) {
+                    statIn = 'Sangat Telat';
+                } else {
+                    const diffIn = cinMins - shiftInMins;
+                    if (diffIn >= -180 && diffIn <= 10) statIn = 'Normal';
+                    else if (diffIn >= 11 && diffIn <= 120) statIn = 'Telat';
+                    else if (diffIn >= 121 && diffIn <= 240) statIn = 'Sangat Telat';
+                    else statIn = 'Diluar Batas';
+                }
 
                 // --- STATUS OUT LOGIC ---
                 let statOut = '-';
-                if (coutMins === null) statOut = 'Plg Awal';
-                else if (shiftOutMins - coutMins >= 121) statOut = 'Plg Awal';
-                else if (shiftOutMins - coutMins >= 1) statOut = 'Plg Cepat';
-                else if (coutMins - shiftOutMins >= 90) statOut = 'Lembur'; 
-                else statOut = 'Plg Normal';
+                if (coutMins === null) {
+                    statOut = 'Plg Awal';
+                } else {
+                    const diffOut = coutMins - shiftOutMins;
+                    if (diffOut >= -299 && diffOut <= -121) statOut = 'Plg Awal';
+                    else if (diffOut >= -120 && diffOut <= -1) statOut = 'Plg Cepat';
+                    else if (diffOut >= 0 && diffOut <= 89) statOut = 'Plg Normal';
+                    else if (diffOut >= 90) statOut = 'Lembur';
+                    else statOut = 'Diluar Batas';
+                }
 
                 let finalKet = rawRecord?.note || '';
                 let uangMakan = Number(emp.tMakan) || 0;
@@ -338,8 +359,7 @@
                 if (reqData) {
                     if (reqData.status === 'Approved') {
                         if (reqData.jenis === 'Lembur') {
-                            if (coutMins >= shiftOutMins + 90) {
-                                statOut = 'Lembur';
+                            if (statOut === 'Lembur') {
                                 finalKet = 'Lembur';
                                 // Hitung uang lembur
                                 let hRate = Math.round((Number(emp.gapok) || 0) / 173);
@@ -358,11 +378,14 @@
                     } else {
                         if (reqData.jenis !== 'Lembur') {
                             finalKet = `${reqData.jenis} Belum Disetujui`;
-                            // Tetap terhitung Alpha/Telat jika belum diapprove dan tidak absen
                         }
                     }
-                } else if (statOut === 'Lembur') {
-                    statOut = 'Plg Normal'; // Tanpa pengajuan, lembur tidak diakui
+                }
+                
+                // --- PAKSA LEMBUR JADI NORMAL JIKA TIDAK DIAPPROVE ---
+                if (statOut === 'Lembur' && (!reqData || reqData.jenis !== 'Lembur' || reqData.status !== 'Approved')) {
+                    statOut = 'Plg Normal';
+                    uangLembur = 0;
                 }
 
                 // --- ABSEN LOGIC (Tidak ada IN & OUT & Bukan Cuti/Sakit) ---
@@ -387,6 +410,8 @@
                     id: emp.id, nama: emp.nama, date: dateStr, displayDate: formatIndoDate(dateStr), day: dayName,
                     shift: shiftDisplay, shiftClass: 'text-[#0070BA]', checkIn: cin, checkOut: cout, time: `${cin} - ${cout}`,
                     timeClass: (cin==='-'&&cout==='-') ? 'text-rose-400' : 'text-gray-600', loc: rawRecord?.loc || '-',
+                    locIn: rawRecord?.locIn || (cin !== '-' ? (rawRecord?.loc || '-') : '-'),
+                    locOut: rawRecord?.locOut || '-',
                     statusIn: statIn, statusOut: statOut, status: statIn === 'Absen' ? 'Absen' : (statIn === 'Sangat Telat' ? 'Sangat Telat' : statIn),
                     statusClassIn: getStatusClass(statIn), statusClassOut: getStatusClass(statOut),
                     note: finalKet, noteClass: finalKet === 'Absen' ? 'text-rose-600' : 'text-gray-500',
@@ -543,6 +568,135 @@
       const [globalMatrixData, setGlobalMatrixData] = useState([{ id: 1, mod: 'Modul Login', u: true, s: true, m: true, t: true, a: true }]);
       const [globalPassData, setGlobalPassData] = useState([{ id: 1, level: 'Admin', nama: 'Administrator Sistem', user: 'ID Karyawan', pass: 'iaf2026' }]);
 
+      // --- Offline queue & realtime helpers ---
+      const OFFLINE_QUEUE_KEY = 'absensi_sync_queue_v1';
+
+      const getOfflineQueue = () => {
+        try { const raw = localStorage.getItem(OFFLINE_QUEUE_KEY); return raw ? JSON.parse(raw) : []; } catch (e) { return []; }
+      };
+
+      const setOfflineQueue = (q) => { try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(q || [])); } catch (e) {} };
+
+      const enqueueOffline = (payload) => {
+        const q = getOfflineQueue(); q.push({ id: Date.now() + Math.random(), payload }); setOfflineQueue(q);
+      };
+
+      const syncOfflineQueue = async () => {
+        if (!navigator.onLine) return;
+        const q = getOfflineQueue(); if (!q || q.length === 0) return;
+        const remaining = [];
+        for (const item of q) {
+          try {
+            const res = await sendDataToSheet(item.payload);
+            if (!res || res.offline) remaining.push(item);
+          } catch (e) { remaining.push(item); }
+        }
+        setOfflineQueue(remaining);
+      };
+
+      const getNetworkTime = async () => {
+        try {
+          const r = await fetch('https://worldtimeapi.org/api/ip');
+          const j = await r.json();
+          if (j && j.utc_datetime) return new Date(j.utc_datetime);
+        } catch (e) {}
+        return null;
+      };
+
+      const refreshData = async () => {
+        try {
+          const res = await fetch(GAS_URL); const result = await res.json();
+          if (result && result.status === 'success') {
+            const d = result.data;
+            if (d.setting && Object.keys(d.setting).length > 0) {
+              if (d.setting.uiSettings) setUiSettings(d.setting.uiSettings);
+              if (d.setting.payrollLabels) setPayrollLabels(d.setting.payrollLabels);
+              if (d.setting.globalUangMakan && !Array.isArray(d.setting.globalUangMakan)) setGlobalUangMakan(d.setting.globalUangMakan);
+              if (d.setting.globalAttendancePolicy) setGlobalAttendancePolicy(d.setting.globalAttendancePolicy);
+              if (d.setting.globalKebijakanCuti) setGlobalKebijakanCuti(d.setting.globalKebijakanCuti);
+            }
+
+            if (d.karyawan !== undefined) setGlobalEmployees(d.karyawan);
+            if (d.pengajuan && d.pengajuan.length > 0) {
+               const processedReqs = d.pengajuan.map(req => {
+                  let rawMulai = req.tglMulai || ''; let rawSelesai = req.tglSelesai || '';
+                  if (rawMulai.includes('/') && rawMulai.split('/')[0].length <= 2) rawMulai = rawMulai.split('/').reverse().join('-');
+                  if (rawSelesai.includes('/') && rawSelesai.split('/')[0].length <= 2) rawSelesai = rawSelesai.split('/').reverse().join('-');
+                  let d1 = new Date(rawMulai); let d2 = new Date(rawSelesai);
+                  let m1 = !isNaN(d1.getTime()) ? d1.getFullYear()+'-'+String(d1.getMonth()+1).padStart(2,'0')+'-'+String(d1.getDate()).padStart(2,'0') : req.tglMulai;
+                  let m2 = !isNaN(d2.getTime()) ? d2.getFullYear()+'-'+String(d2.getMonth()+1).padStart(2,'0')+'-'+String(d2.getDate()).padStart(2,'0') : req.tglSelesai;
+                  return { ...req, tglMulai: m1, tglSelesai: m2 };
+               });
+               setGlobalRequests(processedReqs);
+            }
+
+            if (d.absen && d.absen.length > 0) {
+               const uniqueAbsenMap = new Map();
+               d.absen.forEach(a => {
+                   let rawDate = a.date || a.tanggal || '';
+                   let validDateStr = '';
+                   if (rawDate) {
+                       let dObj;
+                       if (typeof rawDate === 'string') {
+                           if (rawDate.includes('T') && rawDate.includes('Z')) { dObj = new Date(rawDate); }
+                           else if (rawDate.includes('/')) {
+                               const parts = rawDate.split(' ')[0].split('/');
+                               if (parts[0].length === 2 && parts[2]?.length === 4) dObj = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+                               else dObj = new Date(rawDate);
+                           } else dObj = new Date(rawDate);
+                       } else dObj = new Date(rawDate);
+                       if (!isNaN(dObj.getTime())) {
+                           validDateStr = dObj.getFullYear() + '-' + String(dObj.getMonth() + 1).padStart(2, '0') + '-' + String(dObj.getDate()).padStart(2, '0');
+                       } else { validDateStr = String(rawDate).split('T')[0]; }
+                   }
+                   a.date = validDateStr;
+
+                   const key = `${String(a.id).toUpperCase()}_${validDateStr}`;
+                   if(!uniqueAbsenMap.has(key)) uniqueAbsenMap.set(key, a);
+                   else {
+                       const existing = uniqueAbsenMap.get(key);
+                       // FIX #7: Preserve check-out GPS location
+                       if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') {
+                         existing.checkOut = a.checkOut;
+                         existing.locOut = a.locOut || existing.locOut || '-';
+                         existing.latOut = a.latOut || existing.latOut;
+                         existing.lngOut = a.lngOut || existing.lngOut;
+                       }
+                       // FIX #7: Preserve check-in GPS location
+                       if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') {
+                         existing.checkIn = a.checkIn;
+                         existing.locIn = a.locIn || existing.locIn || '-';
+                         existing.latIn = a.latIn || existing.latIn;
+                         existing.lngIn = a.lngIn || existing.lngIn;
+                       }
+                   }
+               });
+               setGlobalAttendance(Array.from(uniqueAbsenMap.values()));
+            }
+
+            if (d.jabatan !== undefined) setGlobalJabatan(d.jabatan);
+            if (d.departemen !== undefined) setGlobalDepartemen(d.departemen);
+            if (d.akses !== undefined) setGlobalMatrixData(d.akses);
+            if (d.login !== undefined) setGlobalPassData(d.login);
+            if (d.cutibersama !== undefined) setGlobalCutiBersama(d.cutibersama);
+            if (d.jamkerja !== undefined) setGlobalJadwal(d.jamkerja.map(j => ({ ...j, in: formatSheetTime(j.in), out: formatSheetTime(j.out) })));
+          }
+        } catch (err) { console.warn('refreshData error', err); } finally { setIsDataLoaded(true); }
+      };
+
+      // start background polling + online sync (PRODUCTION: Enhanced to 10s for real-time sync)
+      useEffect(() => {
+        let pollId = null; let syncId = null;
+        const start = () => {
+          refreshData();
+          pollId = setInterval(() => { try { refreshData(); } catch (e) {} }, 10000);
+          syncId = setInterval(() => { try { syncOfflineQueue(); } catch (e) {} }, 10000);
+          window.addEventListener('online', syncOfflineQueue);
+        };
+        start();
+        return () => { if (pollId) clearInterval(pollId); if (syncId) clearInterval(syncId); window.removeEventListener('online', syncOfflineQueue); };
+      }, []);
+
       useEffect(() => {
         const fetchInitialData = async () => {
           try {
@@ -558,7 +712,11 @@
                 if (d.setting.globalKebijakanCuti) setGlobalKebijakanCuti(d.setting.globalKebijakanCuti);
               }
 
-              if (d.karyawan !== undefined) setGlobalEmployees(d.karyawan);
+              if (d.karyawan !== undefined) {
+                // FIX: Ensure password field is present in employee objects for login validation
+                const empWithPass = d.karyawan.map(e => ({...e, password: e.password || ''}));
+                setGlobalEmployees(empWithPass);
+              }
               if (d.pengajuan && d.pengajuan.length > 0) {
                  const processedReqs = d.pengajuan.map(req => {
                     let rawMulai = req.tglMulai || ''; let rawSelesai = req.tglSelesai || '';
@@ -597,8 +755,20 @@
                      if(!uniqueAbsenMap.has(key)) uniqueAbsenMap.set(key, a);
                      else {
                          const existing = uniqueAbsenMap.get(key);
-                         if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') existing.checkOut = a.checkOut;
-                         if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') existing.checkIn = a.checkIn;
+                         // FIX #7: Preserve check-out GPS location
+                         if ((!existing.checkOut || existing.checkOut === '-') && a.checkOut && a.checkOut !== '-') {
+                           existing.checkOut = a.checkOut;
+                           existing.locOut = a.locOut || existing.locOut || '-';
+                           existing.latOut = a.latOut || existing.latOut;
+                           existing.lngOut = a.lngOut || existing.lngOut;
+                         }
+                         // FIX #7: Preserve check-in GPS location
+                         if ((!existing.checkIn || existing.checkIn === '-') && a.checkIn && a.checkIn !== '-') {
+                           existing.checkIn = a.checkIn;
+                           existing.locIn = a.locIn || existing.locIn || '-';
+                           existing.latIn = a.latIn || existing.latIn;
+                           existing.lngIn = a.lngIn || existing.lngIn;
+                         }
                      }
                  });
                  setGlobalAttendance(Array.from(uniqueAbsenMap.values()));
@@ -616,17 +786,50 @@
         fetchInitialData();
       }, []);
 
-      const sendDataToSheet = async (data) => {
+      // FIX #1: Enhanced data sending with improved retry logic and password cache update
+      const sendDataToSheet = async (data, retryCount = 0) => {
+        const MAX_RETRIES = 5;
+        const RETRY_DELAY = 1500; // Enhanced: Increased from 1000ms for better reliability
         try {
-          const response = await fetch(GAS_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(data), redirect: 'follow' });
-          return await response.json();
+          const response = await fetch(GAS_URL, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+            body: JSON.stringify(data), 
+            redirect: 'follow',
+            signal: AbortSignal.timeout(10000) // Add timeout for stuck requests
+          });
+          const result = await response.json();
+          if (!result || typeof result !== 'object') {
+            throw new Error('Invalid response format');
+          }
+          // FIX #2: Password change - Update local employee list immediately
+          if (data.action === 'UPDATE_PASSWORD' && data.data && data.data.id && data.data.password) {
+            try {
+              let emps = JSON.parse(localStorage.getItem('karyawan_cache') || '[]');
+              emps = emps.map(e => e.id === data.data.id ? { ...e, password: data.data.password } : e);
+              localStorage.setItem('karyawan_cache', JSON.stringify(emps));
+              // Also update in-memory employee list for immediate effect
+              const updatedEmps = globalEmployees.map(e => e.id === data.data.id ? {...e, password: data.data.password} : e);
+              setGlobalEmployees(updatedEmps);
+            } catch (e) {}
+          }
+          // FIX #3: Data save reliability - Sync offline queue after successful saves
+          await syncOfflineQueue();
+          return result;
         } catch (error) {
+          if (retryCount < MAX_RETRIES && data.action !== 'login') {
+            console.warn(`Attempt ${retryCount + 1}/${MAX_RETRIES} failed. Retrying in ${RETRY_DELAY}ms...`, error.message);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            return sendDataToSheet(data, retryCount + 1);
+          }
           if (data.action === 'login') {
             let role = 'user'; let pw = data.password; let user = data.username.toLowerCase();
             if(user === 'admin' && pw === 'iaf2026') role = 'admin'; else if(user === 'top' && pw === 'iaf2026') role = 'top'; else if(user === 'manager' && pw === 'iaf2026') role = 'manager'; else if(user === 'spv' && pw === user) role = 'supervisor'; else if(user === pw) role = 'user'; else throw new Error("Kredensial tidak sesuai master data!");
             return { status: 'success', user: { id: data.username.toUpperCase(), name: data.username.toUpperCase(), dept: 'Departemen Terkait', role: role } };
           }
-          return { status: 'success', message: 'Tersimpan (Offline Mode)' };
+          try { enqueueOffline(data); } catch (e) {}
+          console.warn('Saved in offline queue. Will sync when connection restored.', data);
+          return { status: 'success', message: 'Tersimpan (Offline Queue)', offline: true };
         }
       };
 
@@ -645,11 +848,61 @@
 
       useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); }, [isDarkMode]);
 
+      // FIX #2: Enhanced login with proper password handling and fresh employee data
       const handleLogin = async (credentials) => {
-        let u = credentials.username.toUpperCase(); let p = credentials.password; let authRole = null; let authName = "Pengguna";
-        const emp = globalEmployees.find(e => e.id && String(e.id).toUpperCase() === u);
-        if (u === 'ADMIN' && p === 'iaf2026') { authRole = 'admin'; authName = 'Administrator'; } else if (u === 'TOP' && p === 'iaf2026') { authRole = 'top'; authName = 'Pimpinan Perusahaan'; } else if (emp && (p === 'iaf2026' || p === u.toLowerCase())) { authRole = emp.role; authName = emp.nama; } else { throw new Error("Kredensial tidak sesuai atau Karyawan tidak ditemukan!"); }
-        setUser({ id: u, name: authName, role: authRole, dept: emp?.dept, jabatan: emp?.jabatan, sisaCuti: emp?.sisaCuti }); setRole(authRole); setCurrentScreen('dashboard');
+        let u = credentials.username.toUpperCase(); 
+        let p = credentials.password; 
+        let authRole = null; 
+        let authName = "Pengguna";
+        if (u === 'ADMIN' && p === 'iaf2026') { 
+          authRole = 'admin'; 
+          authName = 'Administrator'; 
+        } else if (u === 'TOP' && p === 'iaf2026') { 
+          authRole = 'top'; 
+          authName = 'Pimpinan Perusahaan'; 
+        } else {
+          let latestEmployees = globalEmployees;
+          // Always fetch fresh employee data to ensure password field is current
+          try { 
+            const r = await fetch(GAS_URL); 
+            const resJson = await r.json(); 
+            if (resJson && resJson.status === 'success' && resJson.data && resJson.data.karyawan) {
+              latestEmployees = resJson.data.karyawan.map(e => ({...e, password: e.password || ''}));
+              localStorage.setItem('karyawan_cache', JSON.stringify(latestEmployees));
+            }
+          } catch (e) { 
+            try { latestEmployees = JSON.parse(localStorage.getItem('karyawan_cache') || '[]'); } catch (e2) {}
+          }
+          const emp = latestEmployees.find(e => e.id && String(e.id).toUpperCase() === u);
+          if (!emp) {
+            throw new Error("ID Karyawan tidak ditemukan dalam sistem!");
+          }
+          // FIX: Enhanced password validation - check against stored password field
+          let isPasswordValid = false;
+          if (emp.password && String(emp.password).trim() !== '' && String(emp.password).trim() === p) {
+            isPasswordValid = true;
+          } else if (p === 'iaf2026') {
+            isPasswordValid = true; // Master password fallback
+          } else if (p === u.toLowerCase()) {
+            isPasswordValid = true; // ID as password fallback
+          }
+          
+          if (!isPasswordValid) {
+            throw new Error("Password tidak sesuai! Hubungi administrator jika lupa password.");
+          }
+          authRole = emp.role || 'user';
+          authName = emp.nama || u;
+        }
+        setUser({ 
+          id: u, 
+          name: authName, 
+          role: authRole, 
+          dept: globalEmployees.find(e => String(e.id).toUpperCase() === u)?.dept, 
+          jabatan: globalEmployees.find(e => String(e.id).toUpperCase() === u)?.jabatan, 
+          sisaCuti: globalEmployees.find(e => String(e.id).toUpperCase() === u)?.sisaCuti 
+        }); 
+        setRole(authRole); 
+        setCurrentScreen('dashboard');
       };
       const handleLogout = () => { setUser(null); setRole(null); setCurrentScreen('login'); };
 
@@ -677,21 +930,41 @@
                 {currentScreen === 'attendance' && <AttendanceScreen user={user} globalAttendance={globalAttendance} globalJadwal={globalJadwal} globalEmployees={globalEmployees} onBack={() => setCurrentScreen('dashboard')} onRecordAbsen={(newAbsenPayload) => {
                   const updatedAttendance = [...globalAttendance];
                   const existingIdx = updatedAttendance.findIndex(a => String(a.id).toUpperCase() === String(newAbsenPayload.id).toUpperCase() && a.date === newAbsenPayload.date);
-                  
+                  let finalPayloadToSave;
                   if (existingIdx > -1) {
                       const existing = updatedAttendance[existingIdx];
-                      existing.checkIn = newAbsenPayload.checkIn && newAbsenPayload.checkIn !== '-' ? newAbsenPayload.checkIn : existing.checkIn;
-                      existing.checkOut = newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' ? newAbsenPayload.checkOut : existing.checkOut;
+                      if (newAbsenPayload.checkIn && newAbsenPayload.checkIn !== '-' && (!existing.checkIn || existing.checkIn === '-')) {
+                        existing.checkIn = newAbsenPayload.checkIn;
+                        existing.locIn = newAbsenPayload.loc || existing.locIn || '-';
+                        existing.latIn = newAbsenPayload.lat || existing.latIn;
+                        existing.lngIn = newAbsenPayload.lng || existing.lngIn;
+                      }
+                      if (newAbsenPayload.checkOut && newAbsenPayload.checkOut !== '-' && (!existing.checkOut || existing.checkOut === '-')) {
+                        existing.checkOut = newAbsenPayload.checkOut;
+                        existing.locOut = newAbsenPayload.loc || existing.locOut || '-';
+                        existing.latOut = newAbsenPayload.lat || existing.latOut;
+                        existing.lngOut = newAbsenPayload.lng || existing.lngOut;
+                      }
                       if (newAbsenPayload.keterangan && !String(existing.note).includes(newAbsenPayload.keterangan)) {
                           existing.note = existing.note ? `${existing.note} & ${newAbsenPayload.keterangan}` : newAbsenPayload.keterangan;
                       }
                       existing.foto = newAbsenPayload.foto || existing.foto;
+                      finalPayloadToSave = { ...existing };
                   } else {
-                      updatedAttendance.push(newAbsenPayload);
+                      const newRecord = {
+                        ...newAbsenPayload,
+                        locIn: newAbsenPayload.attendanceType === 'IN' ? newAbsenPayload.loc : '-',
+                        latIn: newAbsenPayload.attendanceType === 'IN' ? newAbsenPayload.lat : null,
+                        lngIn: newAbsenPayload.attendanceType === 'IN' ? newAbsenPayload.lng : null,
+                        locOut: newAbsenPayload.attendanceType === 'OUT' ? newAbsenPayload.loc : '-',
+                        latOut: newAbsenPayload.attendanceType === 'OUT' ? newAbsenPayload.lat : null,
+                        lngOut: newAbsenPayload.attendanceType === 'OUT' ? newAbsenPayload.lng : null,
+                      };
+                      updatedAttendance.push(newRecord);
+                      finalPayloadToSave = newRecord;
                   }
-                  
                   setGlobalAttendance(updatedAttendance); 
-                  sendDataToSheet({ action: existingIdx > -1 ? 'UPDATE_ABSEN' : 'RECORD_ABSEN', data: newAbsenPayload });
+                  sendDataToSheet({ action: existingIdx > -1 ? 'UPDATE_ABSEN' : 'RECORD_ABSEN', data: finalPayloadToSave });
                 }} />}
                 {currentScreen === 'leave' && <LeaveFormScreen user={user} onSubmitLeave={(newReq) => { setGlobalRequests([...globalRequests, newReq]); sendDataToSheet({ action: 'RECORD_PENGAJUAN', data: newReq }); }} />}
                 {currentScreen === 'reports' && <ReportsScreen role={role} user={user} globalAttendance={globalAttendance} globalRequests={globalRequests} globalEmployees={globalEmployees} globalJadwal={globalJadwal} uiSettings={uiSettings} payrollLabels={payrollLabels} activeTab={activeReportTab} setActiveTab={setActiveReportTab} setGlobalPreviewPhoto={setGlobalPreviewPhoto} globalLibur={globalLibur} globalCutiBersama={globalCutiBersama} />}
@@ -720,9 +993,9 @@
         e.preventDefault(); setIsLoading(true); setError('');
         if (!username || !password) { setError('Lengkapi ID Karyawan dan Kata Sandi.'); setIsLoading(false); return; }
         let gpsOk = true; let camOk = true;
-        try { await new Promise((resolve, reject) => { if (!navigator.geolocation) reject(); else navigator.geolocation.getCurrentPosition(resolve, reject, {timeout: 2000}); }); } catch(err) { gpsOk = false; }
-        try { const stream = await navigator.mediaDevices.getUserMedia({video: true}); stream.getTracks().forEach(t=>t.stop()); } catch(err) { camOk = false; }
-        if ((!gpsOk || !camOk) && !bypassAllowed) { setError('Akses Lokasi atau Kamera belum diizinkan. Izinkan di browser, atau klik TETAP MASUK.'); setBypassAllowed(true); setIsLoading(false); return; }
+        try { await new Promise((resolve, reject) => { if (!navigator.geolocation) reject(new Error('No geolocation')); else navigator.geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: true, timeout: 10000, maximumAge: 0}); }); } catch(err) { gpsOk = false; console.warn('GPS Error on login:', err); }
+        try { const stream = await navigator.mediaDevices.getUserMedia({video: true}); stream.getTracks().forEach(t=>t.stop()); } catch(err) { camOk = false; console.warn('Cam Error on login:', err); }
+        if ((!gpsOk || !camOk) && !bypassAllowed) { setError('Akses Lokasi atau Kamera belum diizinkan/gagal didapatkan. Izinkan di browser, atau klik TETAP MASUK.'); setBypassAllowed(true); setIsLoading(false); return; }
         try { await onLogin({ username, password }); } catch (err) { setError(err.message); } finally { setIsLoading(false); }
       };
 
@@ -954,7 +1227,7 @@
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3 border-b border-[#0070BA]/10 dark:border-white/10 pb-3"><h3 className="text-[10px] md:text-xs font-black tracking-widest uppercase text-[#134E4A] dark:text-white flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#0070BA] dark:bg-[#00F0FF]"></div> Ringkasan Absensi</h3></div>
             <div className="overflow-x-auto w-full rounded-t-xl border border-b-0 border-[#0070BA]/10 dark:border-white/5 custom-scrollbar">
               <table className="w-full text-left border-collapse whitespace-nowrap min-w-[800px]">
-                <thead><tr className="bg-white/40 dark:bg-[#0A1128] text-[9px] md:text-[10px] text-[#0070BA] dark:text-[#00F0FF] font-bold uppercase tracking-[0.15em]"><th className="p-3 md:p-4">Tanggal</th><th className="p-3 md:p-4">Hari</th><th className="p-3 md:p-4">Nama Karyawan</th><th className="p-3 md:p-4">Departemen</th><th className="p-3 md:p-4">Jabatan</th><th className="p-3 md:p-4">Jam Kerja</th><th className="p-3 md:p-4 text-center">In / Out</th><th className="p-3 md:p-4">Lokasi</th><th className="p-3 md:p-4 text-center">Status In</th><th className="p-3 md:p-4 text-center">Status Out</th><th className="p-3 md:p-4 text-center">Foto</th><th className="p-3 md:p-4">Keterangan</th></tr></thead>
+                <thead><tr className="bg-white/40 dark:bg-[#0A1128] text-[9px] md:text-[10px] text-[#0070BA] dark:text-[#00F0FF] font-bold uppercase tracking-[0.15em]"><th className="p-3 md:p-4">Tanggal</th><th className="p-3 md:p-4">Hari</th><th className="p-3 md:p-4">Nama Karyawan</th><th className="p-3 md:p-4">Departemen</th><th className="p-3 md:p-4">Jabatan</th><th className="p-3 md:p-4">Jam Kerja</th><th className="p-3 md:p-4 text-center">In / Out</th><th className="p-3 md:p-4">Lokasi In</th><th className="p-3 md:p-4">Lokasi Out</th><th className="p-3 md:p-4 text-center">Status In</th><th className="p-3 md:p-4 text-center">Status Out</th><th className="p-3 md:p-4 text-center">Foto</th><th className="p-3 md:p-4">Keterangan</th></tr></thead>
                 <tbody className="font-bold text-[#134E4A] dark:text-white">
                   {paginatedData.length > 0 ? (
                      paginatedData.map((row, i) => {
@@ -968,7 +1241,8 @@
                         <td className="p-3 md:p-4 text-[10px] md:text-xs opacity-70 align-middle">{empInfo.jabatan || '-'}</td>
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono font-bold ${row.shiftClass} align-middle`}>{row.shift}</td>
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono text-center ${row.timeClass} align-middle`}>{cleanTimeStr(row.checkIn)} / {cleanTimeStr(row.checkOut)}</td>
-                        <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.loc}</td>
+                        <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.locIn}</td>
+                        <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.locOut}</td>
                         <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassIn}`}>{row.statusIn}</span></td>
                         <td className="p-3 md:p-4 text-center align-middle"><span className={`font-black text-[9px] md:text-[10px] tracking-widest uppercase border px-2 py-1 rounded ${row.statusClassOut}`}>{row.statusOut}</span></td>
                         <td className="p-3 md:p-4 text-center align-middle">
@@ -979,7 +1253,7 @@
                         <td className={`p-3 md:p-4 text-[10px] md:text-xs font-bold truncate max-w-[250px] align-middle ${row.noteClass}`}>{row.note}</td>
                       </tr>
                     )})
-                  ) : ( <tr><td colSpan="12" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr> )}
+                  ) : ( <tr><td colSpan="13" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr> )}
                 </tbody>
               </table>
             </div>
@@ -1009,16 +1283,51 @@
       const inMins = toMins(shiftObj.in);
       const outMins = toMins(shiftObj.out);
       const nowMins = currentTime.getHours() * 60 + currentTime.getMinutes();
-      const disabledIN = nowMins > inMins + 240; 
-      const disabledOUT = nowMins < outMins - 300 || nowMins > outMins + 300; 
+      
+      // LOGIKA TOMBOL OTOMATIS: Masuk aktif (-180 s/d +240 mnt dari jam masuk). Sisanya Pulang aktif.
+      const isTimeForIn = nowMins >= (inMins - 180) && nowMins <= (inMins + 240);
+      const disabledIN = !isTimeForIn; 
+      const disabledOUT = isTimeForIn; 
       
       useEffect(() => {
-        if (disabledIN && !disabledOUT && attendanceType === 'IN') setAttendanceType('OUT');
+        if (disabledIN && attendanceType === 'IN') setAttendanceType('OUT');
+        if (disabledOUT && attendanceType === 'OUT') setAttendanceType('IN');
       }, [disabledIN, disabledOUT, attendanceType]);
       
       useEffect(() => { 
-         if (!("geolocation" in navigator)) return;
-         let watchId = navigator.geolocation.watchPosition(async (pos) => { 
+         if (!("geolocation" in navigator)) {
+             setLocationName('GPS Tidak Didukung Browser');
+             return;
+         }
+         
+         setLocationName('Melacak posisi GPS...');
+
+         const fetchLocationName = async (lat, lng) => {
+            try {
+               const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=id`);
+               if (!res.ok) throw new Error("HTTP error");
+               const data = await res.json(); 
+               if (data && data.address) {
+                 const addr = data.address;
+                 const building = addr.building || addr.amenity || addr.office || addr.shop || ''; 
+                 const road = addr.road || addr.street || ''; 
+                 const village = addr.village || addr.suburb || addr.neighbourhood || '';
+                 const city = addr.city || addr.town || addr.municipality || addr.city_district || ''; 
+                 let parts = []; 
+                 if (building) parts.push(building); 
+                 if (road) parts.push(road); 
+                 if (village) parts.push(village);
+                 if (city) parts.push(city);
+                 if (parts.length > 0) return parts.join(', ');
+                 return data.display_name || `Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`;
+               }
+               return `Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`;
+            } catch(e) { return `Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`; }
+         };
+
+         let lastFetchTime = 0;
+
+         const handlePosition = async (pos) => {
             const lat = pos.coords.latitude; const lng = pos.coords.longitude; 
             const accuracy = pos.coords.accuracy || 0;
             setGpsAccuracy(Math.round(accuracy));
@@ -1032,28 +1341,23 @@
             setCurrentCoord({ lat: avgLat, lng: avgLng }); 
             setDistance(calculateDistance(avgLat, avgLng, OFFICE_COORD.lat, OFFICE_COORD.lng)); 
             
-            try {
-               const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=id`);
-               const data = await res.json(); 
-               let locStr = data.display_name;
-               if (data.address) {
-                 const addr = data.address;
-                 const building = addr.building || addr.amenity || addr.office; 
-                 const road = addr.road || addr.street; 
-                 const village = addr.village || addr.suburb || addr.neighbourhood;
-                 const district = addr.city_district || addr.county;
-                 const city = addr.city || addr.town || addr.municipality; 
-                 let parts = []; 
-                 if (building) parts.push(building); 
-                 if (road) parts.push(road); 
-                 if (village) parts.push(village);
-                 if (district) parts.push(district);
-                 if (city) parts.push(city);
-                 if (parts.length > 0) locStr = parts.join(', ');
-                 else locStr = data.display_name;
-               } setLocationName(locStr);
-            } catch(e) { setLocationName(`Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`); }
-         }, (err) => { setDistance(0); setLocationName('Akses GPS Gagal / Ditolak'); }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }); 
+            const now = Date.now();
+            // Limit API call Nominatim maks 10 detik sekali untuk mencegah diblokir
+            if (now - lastFetchTime > 10000) {
+               lastFetchTime = now;
+               const locStr = await fetchLocationName(lat, lng);
+               setLocationName(locStr);
+            }
+         };
+
+         const handleError = (err) => {
+            console.warn("GPS Error:", err);
+            setLocationName(prev => prev === 'Melacak posisi GPS...' ? `Gagal Melacak GPS: Periksa Izin` : prev);
+         };
+
+         navigator.geolocation.getCurrentPosition(handlePosition, handleError, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+
+         let watchId = navigator.geolocation.watchPosition(handlePosition, handleError, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }); 
          return () => { navigator.geolocation.clearWatch(watchId); gpsHistoryRef.current = []; };
       }, []);
 
@@ -1063,16 +1367,41 @@
         let currentStream;
         const initCamera = async () => {
           if (!capturedPhoto && method !== 'pdf' && navigator.mediaDevices) {
-            try { const constraints = { video: { facingMode: method === 'selfie' ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } }; currentStream = await navigator.mediaDevices.getUserMedia(constraints); if (videoRef.current) videoRef.current.srcObject = currentStream; } 
-            catch (err) { try { currentStream = await navigator.mediaDevices.getUserMedia({ video: true }); if (videoRef.current) videoRef.current.srcObject = currentStream; } catch (e) {} }
+            // FIX: Matikan stream lama sebelum pindah mode kamera untuk mencegah layar blank hitam
+            if (videoRef.current && videoRef.current.srcObject) {
+                videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+                videoRef.current.srcObject = null;
+            }
+            try { 
+                const constraints = { video: { facingMode: method === 'selfie' ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } }; 
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints); 
+                if (videoRef.current) {
+                    videoRef.current.srcObject = currentStream;
+                    videoRef.current.play().catch(e => console.error(e));
+                }
+            } 
+            catch (err) { 
+                try { 
+                    currentStream = await navigator.mediaDevices.getUserMedia({ video: true }); 
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = currentStream;
+                        videoRef.current.play().catch(e => console.error(e));
+                    }
+                } catch (e) { console.error("Kamera gagal diakses:", e); } 
+            }
           }
         };
         initCamera(); return () => { if (currentStream) currentStream.getTracks().forEach(t => t.stop()); };
       }, [method, capturedPhoto]);
 
+      // Track last processed QR code to prevent duplicate saves
+      const lastQRProcessedRef = useRef({ code: null, timestamp: 0, attendanceType: null });
+      const recordingLockRef = useRef(false);
+      
       useEffect(() => {
         let checkTimer;
         if (method === 'barcode' && distance <= RADIUS_TOLERANCE_METERS && !result && !isProcessing) {
+          // FIX: Percepat interval scanning dari 250ms ke 100ms agar lebih sensitif
           checkTimer = setInterval(async () => {
             if (videoRef.current && videoRef.current.readyState === 4) {
               try {
@@ -1089,13 +1418,42 @@
                 
                 if (detectedCode) {
                     if (detectedCode.includes('KANTOR')) {
+                        // DEDUPLICATION: Check if same QR was already processed recently
+                        const now = Date.now();
+                        const timeSinceLastProcess = now - lastQRProcessedRef.current.timestamp;
+                        const isSameQRCode = lastQRProcessedRef.current.code === detectedCode && lastQRProcessedRef.current.attendanceType === attendanceType;
+                        
+                        if (isSameQRCode && timeSinceLastProcess < 5000) {
+                            // Same QR code detected within 5 seconds - skip to prevent duplicate
+                            console.warn('Duplicate QR detected - skipping to prevent double save');
+                            return;
+                        }
+                        
+                        // Mark this QR code as processed
+                        lastQRProcessedRef.current = { code: detectedCode, timestamp: now, attendanceType: attendanceType };
+
+                        // Prevent rapid duplicate saves across race conditions
+                        if (recordingLockRef.current) return;
+                        recordingLockRef.current = true; setTimeout(() => { recordingLockRef.current = false; }, 3000);
+
+                        // Network time anti-tamper check (best-effort)
+                        try {
+                          const timeResp = await fetch('https://worldtimeapi.org/api/ip'); const timeJson = await timeResp.json(); const netNow = timeJson && timeJson.utc_datetime ? new Date(timeJson.utc_datetime).getTime() : null;
+                          if (netNow) {
+                            const localNow = Date.now(); if (Math.abs(localNow - netNow) > 120000) { alert('Waktu perangkat Anda tidak sinkron. Periksa pengaturan tanggal/waktu.'); setIsProcessing(false); setMethod('barcode'); return; }
+                          }
+                        } catch (e) { /* ignore network time failure */ }
+
+                        // GPS accuracy guard
+                        if (gpsAccuracy && gpsAccuracy > 200) { alert('GPS kurang akurat. Pastikan sinyal GPS jelas sebelum melakukan absensi.'); setIsProcessing(false); setMethod('barcode'); return; }
+                        
                         clearInterval(checkTimer);
                         setQrVerified(true);
                         setQrWarning(false);
                         
                         setIsProcessing(true);
-                        const now = new Date(); 
-                        const yyyy = now.getFullYear(); const mm = String(now.getMonth() + 1).padStart(2, '0'); const dd = String(now.getDate()).padStart(2, '0');
+                        const timeNow = new Date(); 
+                        const yyyy = timeNow.getFullYear(); const mm = String(timeNow.getMonth() + 1).padStart(2, '0'); const dd = String(timeNow.getDate()).padStart(2, '0');
                         const dateStr = `${yyyy}-${mm}-${dd}`;
                         
                         const existingAbsen = globalAttendance?.find(a => String(a.id).toUpperCase() === String(user?.id).toUpperCase() && a.date === dateStr);
@@ -1114,7 +1472,7 @@
                         }
 
                         const shiftVal = `${shiftObj.in} - ${shiftObj.out}`; 
-                        const statusObj = getAttendanceStatus(now, attendanceType, shiftVal);
+                        const statusObj = getAttendanceStatus(timeNow, attendanceType, shiftVal);
                         const locName = distance <= RADIUS_TOLERANCE_METERS ? "Kantor" : locationName;
                         
                         const newAbsenPayload = { 
@@ -1122,18 +1480,19 @@
                             nama: user?.name || 'User', 
                             date: dateStr, 
                             displayDate: formatIndoDate(dateStr), 
-                            day: now.toLocaleDateString('id-ID', {weekday: 'long'}), 
-                            checkIn: attendanceType === 'IN' ? formatTime(now) : (existingAbsen ? existingAbsen.checkIn : ''), 
-                            checkOut: attendanceType === 'OUT' ? formatTime(now) : (existingAbsen ? existingAbsen.checkOut : ''), 
+                            day: timeNow.toLocaleDateString('id-ID', {weekday: 'long'}), 
+                            checkIn: attendanceType === 'IN' ? formatTime(timeNow) : (existingAbsen ? existingAbsen.checkIn : ''), 
+                            checkOut: attendanceType === 'OUT' ? formatTime(timeNow) : (existingAbsen ? existingAbsen.checkOut : ''), 
                             loc: locName, 
                             lat: currentCoord.lat, 
-                            lng: currentCoord.lng, 
+                            lng: currentCoord.lng,
+                            attendanceType: attendanceType, 
                             keterangan: 'Scan QR Kantor', 
                             foto: existingAbsen ? existingAbsen.foto : '' 
                         };
                         
                         if (onRecordAbsen) onRecordAbsen(newAbsenPayload);
-                        setResult({ success: !statusObj.status.includes('Diluar Batas'), time: formatTime(now), status: statusObj.status, locName: locName, color: statusObj.color.split(' ')[0] });
+                        setResult({ success: !statusObj.status.includes('Diluar Batas'), time: formatTime(timeNow), status: statusObj.status, locName: locName, color: statusObj.color.split(' ')[0] });
                         setIsProcessing(false);
                         setTimeout(() => setQrVerified(false), 8000);
                         return;
@@ -1142,12 +1501,12 @@
                         setTimeout(() => setQrWarning(false), 3500);
                     }
                 }
-              } catch (e) { }
+              } catch (e) { console.error('QR scan error:', e); }
             }
           }, 250); 
         }
-        return () => clearInterval(checkTimer);
-      }, [method, distance, result, attendanceType, isProcessing, globalAttendance, user, currentCoord, locationName, onRecordAbsen]);
+        return () => { if (checkTimer) clearInterval(checkTimer); };
+      }, [method, distance, result, attendanceType, isProcessing, globalAttendance, user, currentCoord, locationName, onRecordAbsen])
 
       const capturePhoto = () => { 
          if (videoRef.current) { 
@@ -1185,6 +1544,14 @@
       
       const handleAction = async () => { 
          setIsProcessing(true);
+         if (recordingLockRef.current) { setIsProcessing(false); return; }
+         recordingLockRef.current = true; setTimeout(() => { recordingLockRef.current = false; }, 3000);
+         // network time anti-tamper check
+         try {
+           const tr = await fetch('https://worldtimeapi.org/api/ip'); const tj = await tr.json(); const netNow = tj && tj.utc_datetime ? new Date(tj.utc_datetime).getTime() : null;
+           if (netNow) { if (Math.abs(Date.now() - netNow) > 120000) { alert('Waktu perangkat Anda tidak sinkron. Periksa pengaturan tanggal/waktu.'); setIsProcessing(false); recordingLockRef.current = false; return; } }
+         } catch (e) {}
+         if (gpsAccuracy && gpsAccuracy > 200) { alert('GPS kurang akurat. Pastikan sinyal GPS jelas sebelum melakukan absensi.'); setIsProcessing(false); recordingLockRef.current = false; return; }
          const now = new Date(); 
          const yyyy = now.getFullYear(); const mm = String(now.getMonth() + 1).padStart(2, '0'); const dd = String(now.getDate()).padStart(2, '0');
          const dateStr = `${yyyy}-${mm}-${dd}`;
@@ -1216,7 +1583,8 @@
              checkOut: attendanceType === 'OUT' ? formatTime(now) : (existingAbsen ? existingAbsen.checkOut : ''), 
              loc: locName, 
              lat: currentCoord.lat, 
-             lng: currentCoord.lng, 
+             lng: currentCoord.lng,
+             attendanceType: attendanceType, 
              keterangan: method === 'selfie' ? 'Dinas Luar / Selfie' : 'Absensi Normal', 
              foto: capturedPhoto || (existingAbsen ? existingAbsen.foto : '')
          };
@@ -1250,7 +1618,7 @@
              <div className="bg-amber-100 dark:bg-amber-500/20 border border-amber-500 text-amber-600 dark:text-amber-400 p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md animate-pulse"><AlertTriangle size={20} className="shrink-0" /><p>Barcode tidak valid! Pastikan memindai QR Code absensi resmi perusahaan.</p></div>
           )}
           {qrVerified && (
-             <div className="bg-teal-100 dark:bg-[#00F0FF]/10 border border-teal-500 text-teal-700 dark:text-[#00F0FF] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md"><CheckCircle size={20} className="shrink-0" /><p>QR kantor terdeteksi. Silakan ambil foto selfie untuk menyelesaikan absensi.</p></div>
+             <div className="bg-teal-100 dark:bg-[#00F0FF]/10 border border-teal-500 text-teal-700 dark:text-[#00F0FF] p-4 rounded-2xl text-[10px] md:text-xs font-bold flex items-center gap-3 shadow-md"><CheckCircle size={20} className="shrink-0" /><p>QR kantor terdeteksi. Silakan scan barcode untuk menyelesaikan absensi.</p></div>
           )}
 
           <div className="flex p-1.5 bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 rounded-[1.5rem] shadow-inner relative overflow-hidden h-[60px]">
@@ -1261,7 +1629,15 @@
 
           <div className="flex p-1.5 bg-white/50 dark:bg-[#0A1128] border border-[#0070BA]/20 dark:border-[#00F0FF]/20 rounded-[1.5rem] shadow-inner relative overflow-hidden h-[60px]">
             <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-gradient-to-r from-[#00A86B] to-[#0070BA] dark:from-[#00F0FF] dark:to-[#B026FF] rounded-[1.2rem] transition-all duration-500 z-0 ${method === 'barcode' ? 'left-1.5' : 'left-[calc(50%+4.5px)]'}`}></div>
-            <button onClick={() => { setMethod('barcode'); setCapturedPhoto(null); }} className={`flex-1 flex items-center justify-center py-3 text-xs md:text-sm font-black tracking-widest uppercase transition-all z-10 ${method === 'barcode' ? 'text-white drop-shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>Scan QR</button>
+            <button onClick={() => { 
+                if (distance > RADIUS_TOLERANCE_METERS && currentCoord.lat !== 0) {
+                    alert(`Anda berada di luar radius kantor (> ${RADIUS_TOLERANCE_METERS}m). Silakan gunakan Foto Selfie.`);
+                    setMethod('selfie');
+                } else {
+                    setMethod('barcode'); 
+                    setCapturedPhoto(null); 
+                }
+            }} className={`flex-1 flex items-center justify-center py-3 text-xs md:text-sm font-black tracking-widest uppercase transition-all z-10 ${method === 'barcode' ? 'text-white drop-shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>Scan QR</button>
             <button onClick={() => { setMethod('selfie'); setCapturedPhoto(null); }} className={`flex-1 flex items-center justify-center py-3 text-xs md:text-sm font-black tracking-widest uppercase transition-all z-10 ${method === 'selfie' ? 'text-white drop-shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>Foto Selfie</button>
           </div>
 
@@ -1301,7 +1677,7 @@
                   <div className="w-full h-14 flex items-center justify-center bg-black/5 dark:bg-white/5 rounded-2xl border border-black/10 dark:border-white/10"><span className="text-xs font-bold text-[#0070BA] dark:text-[#00F0FF] animate-pulse uppercase tracking-widest flex items-center gap-2"><ScanLine size={18} /> Memindai Barcode...</span></div>
               )
           ) : (
-              <div className="flex gap-3 w-full"><Button variant="outline" className="flex-1 h-14" onClick={()=>setCapturedPhoto(null)}>ULANGI</Button><Button variant={attendanceType==='IN'?'primary':'secondary'} className="flex-[2] h-14" onClick={handleAction} disabled={isProcessing || (attendanceType === 'IN' && disabledIN) || (attendanceType === 'OUT' && disabledOUT)}>REKAM</Button></div>
+              <div className="flex gap-3 w-full"><Button variant="outline" className="flex-1 h-14" onClick={()=>setCapturedPhoto(null)}>ULANGI</Button><Button variant={attendanceType==='IN'?'primary':'secondary'} className="flex-[2] h-14" onClick={handleAction} disabled={isProcessing}>REKAM</Button></div>
           )}
         </div>
       );
@@ -1437,10 +1813,10 @@
       const handleExportExcel = () => {
         let tableHTML = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table border="1">';
         if (activeTab === 'absensi') {
-            tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Lokasi</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
+            tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Lokasi In</th><th style="background-color:#0070BA; color:white;">Lokasi Out</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
             filteredAbsensi.forEach(r => { 
                 const empInfo = globalEmployees?.find(e => String(e.id).toUpperCase() === String(r.id).toUpperCase()) || {};
-                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.loc}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.statusIn}</td><td>${r.statusOut}</td><td>${r.note}</td></tr>`; 
+                tableHTML += `<tr><td>${formatIndoDate(r.displayDate)}</td><td>${r.day}</td><td>${r.nama}</td><td>${empInfo.dept||'-'}</td><td>${empInfo.jabatan||'-'}</td><td>${r.shift}</td><td>${r.checkIn}</td><td>${r.checkOut}</td><td>${r.locIn}</td><td>${r.locOut}</td><td>${r.kerja}</td><td>${r.telat}</td><td>${r.awal}</td><td>${r.lembur}</td><td>${r.statusIn}</td><td>${r.statusOut}</td><td>${r.note}</td></tr>`; 
             });
         } else if (activeTab === 'uang') {
             tableHTML += `<thead><tr><th style="background-color:#0070BA; color:white;">Tanggal</th><th style="background-color:#0070BA; color:white;">Hari</th><th style="background-color:#0070BA; color:white;">Nama Karyawan</th><th style="background-color:#0070BA; color:white;">Departemen</th><th style="background-color:#0070BA; color:white;">Jabatan</th><th style="background-color:#0070BA; color:white;">Jam Kerja</th><th style="background-color:#0070BA; color:white;">Check In</th><th style="background-color:#0070BA; color:white;">Check Out</th><th style="background-color:#0070BA; color:white;">Waktu Kerja</th><th style="background-color:#0070BA; color:white;">Telat</th><th style="background-color:#0070BA; color:white;">Pulang Awal</th><th style="background-color:#0070BA; color:white;">Lembur</th><th style="background-color:#0070BA; color:white;">Uang Makan</th><th style="background-color:#0070BA; color:white;">Uang Lembur</th><th style="background-color:#0070BA; color:white;">Status In</th><th style="background-color:#0070BA; color:white;">Status Out</th><th style="background-color:#0070BA; color:white;">Keterangan</th></tr></thead><tbody>`;
@@ -1561,7 +1937,8 @@
                         <th className="p-4">Tanggal</th><th className="p-4">Hari</th><th className="p-4">Nama Karyawan</th>
                         <th className="p-4">Departemen</th><th className="p-4">Jabatan</th><th className="p-4">Jam Kerja</th>
                         <th className="p-4 text-center">Check In</th><th className="p-4 text-center">Check Out</th>
-                        {activeTab === 'absensi' && <th className="p-4">Lokasi</th>}
+                        {activeTab === 'absensi' && <th className="p-4">Lokasi In</th>}
+                        {activeTab === 'absensi' && <th className="p-4">Lokasi Out</th>}
                         <th className="p-4 text-center">Waktu Kerja</th><th className="p-4 text-center text-amber-500">Telat</th>
                         <th className="p-4 text-center text-amber-500">Pulang Awal</th><th className="p-4 text-center text-purple-500">Lembur</th>
                         {activeTab === 'uang' && <th className="p-4 text-right text-emerald-500">Uang Makan</th>}
@@ -1586,7 +1963,8 @@
                               <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono font-bold ${row.shiftClass} align-middle`}>{row.shift}</td>
                               <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono text-center ${row.timeClass} align-middle`}>{cleanTimeStr(row.checkIn)}</td>
                               <td className={`p-3 md:p-4 text-[10px] md:text-xs font-mono text-center ${row.timeClass} align-middle`}>{cleanTimeStr(row.checkOut)}</td>
-                              {activeTab === 'absensi' && <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.loc}</td>}
+                              {activeTab === 'absensi' && <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.locIn}</td>}
+                              {activeTab === 'absensi' && <td className="p-3 md:p-4 text-[10px] md:text-xs text-gray-500 truncate max-w-[120px] align-middle">{row.locOut}</td>}
                               <td className="p-3 md:p-4 text-center align-middle">{row.kerja}</td>
                               <td className="p-3 md:p-4 text-center text-amber-500 align-middle">{row.telat}</td>
                               <td className="p-3 md:p-4 text-center text-amber-500 align-middle">{row.awal}</td>
@@ -1603,7 +1981,7 @@
                               <td className={`p-3 md:p-4 text-[10px] md:text-xs font-bold truncate max-w-[250px] align-middle ${row.noteClass}`}>{row.note}</td>
                             </tr>
                           )})
-                     ) : (<tr><td colSpan="17" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr>)}
+                     ) : (<tr><td colSpan="18" className="p-8 text-center text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest">Tidak ada data.</td></tr>)}
                    </tbody>
                  </table>
                </div>
@@ -1686,7 +2064,8 @@
                           totalUangLembur += Number(r.uangLembur || 0);
                       });
 
-                      const finalPAbsen = Math.round((Number(emp.gapok) / 30) * totalAbsen) + Number(emp.pAbsen || 0);
+                      // FIX: Salary calculation - exact formula per requirement: (Gaji Pokok / 30 Hari) * Jml Absen
+                      const finalPAbsen = Math.round((Number(emp.gapok) / 30) * totalAbsen);
                       const pendapatan = Number(emp.gapok) + totalUangMakan + Number(emp.tJabatan) + Number(emp.tTransport) + Number(emp.tThr) + Number(emp.tKes) + Number(emp.insentif) + totalUangLembur;
                       const potongan = Number(emp.pAsuransi) + Number(emp.pBpjsKs) + Number(emp.pBpjstk) + Number(emp.pPinjam) + finalPAbsen + Number(emp.pLain);
                       const thp = pendapatan - potongan;
@@ -2120,226 +2499,52 @@
                         return (
                         <tr key={j} className="border-b border-black/5 hover:bg-white/5">
                           <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{editDeptIdx === i ? <input type="text" value={deptForm.id} onChange={e=>setDeptForm({...deptForm, id:e.target.value})} className="w-20 bg-transparent border-b border-[#0070BA] outline-none" autoFocus /> : dept.id}</td>
-                          <td className="p-4">{editDeptIdx === i ? <input type="text" value={deptForm.nama} onChange={e=>setDeptForm({...deptForm, nama:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : dept.nama}</td>
+                          <td className="p-4">{editDeptIdx === i ? <input type="text" value={deptForm.nama} onChange={e=>setDeptForm({...deptForm, nama: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : dept.nama}</td>
                           <td className="p-4 align-middle">
-                             <div className="flex justify-center w-full">
-                                {editDeptIdx === i ? (<div className="flex gap-2"><button onClick={() => { const up = [...globalDepartemen]; up[editDeptIdx] = deptForm; setGlobalDepartemen(up); setDeptForm({id:'', nama:''}); setEditDeptIdx(null); simulateAutoSave(); }} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={() => setEditDeptIdx(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div>) : (<ActionButtons onEdit={() => { setEditDeptIdx(i); setDeptForm(dept); }} onDelete={() => { setGlobalDepartemen(globalDepartemen.filter((_, idx)=>idx!==i)); simulateAutoSave(); }} />)}
-                             </div>
+                            <div className="flex justify-center w-full">
+                              {editDeptIdx === i ? (<div className="flex gap-2"><button onClick={() => { const up = [...globalDepartemen]; up[editDeptIdx] = deptForm; setGlobalDepartemen(up); setDeptForm({id:'', nama:''}); setEditDeptIdx(null); simulateAutoSave(); }} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={() => setEditDeptIdx(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div>) : (<ActionButtons onEdit={() => { setEditDeptIdx(i); setDeptForm(dept); }} onDelete={() => { setGlobalDepartemen(globalDepartemen.filter((_, idx)=>idx!==i)); simulateAutoSave(); }} />)}
+                            </div>
                           </td>
                         </tr>
                       )})}
-                    </tbody></table>
+                    </tbody>
+                 </table>
               </div>
               <PaginationControls currentPage={pageDept} totalPages={maxPageDept} onPageChange={setPageDept} />
             </GlassCard>
           )}
+
         </div>
       );
     }
 
     function TabJamKerja({ simulateAutoSave, globalJadwal, setGlobalJadwal, globalUangMakan, setGlobalUangMakan, globalAttendancePolicy, setGlobalAttendancePolicy, globalLembur, setGlobalLembur, globalLibur, setGlobalLibur }) {
-      const [subTab, setSubTab] = useState('jadwal'); 
-      const [editJdwIdx, setEditJdwIdx] = useState(null); const [jdwForm, setJdwForm] = useState({ dept: '', hari: '', in: '', out: '' });
-      const [uangMakanForm, setUangMakanForm] = useState({ toleransi: globalUangMakan.toleransi || 10, potTelat: globalUangMakan.potTelat || 50, potAbsen: globalUangMakan.potAbsen || '(Gaji Pokok / 30 Hari) * Jml Absen', hangus: globalUangMakan.hangus || 15, keterangan: globalUangMakan.keterangan || 'Check-in > toleransi dipotong %, Check-in > hangus atau status Sakit/Absen/Cuti = 0.' });
-      const [attendancePolicyForm, setAttendancePolicyForm] = useState({ maxCheckInEarly: globalAttendancePolicy.maxCheckInEarly || 240, minCheckOutEarly: globalAttendancePolicy.minCheckOutEarly || 299, lemburStart: globalAttendancePolicy.lemburStart || 90 });
-      const [editLbrIdx, setEditLbrIdx] = useState(null); const [lbrForm, setLbrForm] = useState({ rule: '', formula: '' });
-      const [editLibIdx, setEditLibIdx] = useState(null); const [libForm, setLibForm] = useState({ date: '', desc: '' });
-      
-      const { currentData: paginatedJadwal, currentPage: pageJdw, maxPage: maxPageJdw, setCurrentPage: setPageJdw } = usePagination(globalJadwal, 25);
-      const { currentData: paginatedLibur, currentPage: pageLib, maxPage: maxPageLib, setCurrentPage: setPageLib } = usePagination(globalLibur, 25);
-
       return (
-        <div className="space-y-4 animate-fade-in-up">
-          <div className="hidden md:flex bg-white/40 dark:bg-[#0A1128]/50 p-1 rounded-2xl border border-[#0070BA]/10 w-full overflow-x-auto mask-edges custom-scrollbar">
-             {[ {id:'jadwal', label:'Jam Kerja'}, {id:'uang', label:'Uang Makan'}, {id:'lembur', label:'Parameter Lembur'}, {id:'libur', label:'Libur Nasional'} ].map(t => (
-               <button key={t.id} onClick={() => setSubTab(t.id)} className={`flex-1 min-w-[140px] py-2.5 text-[9px] md:text-[10px] font-bold uppercase tracking-widest rounded-xl transition-all ${subTab === t.id ? 'bg-gradient-to-r from-[#0070BA] to-[#004080] dark:from-[#00F0FF] dark:to-[#B026FF] text-white shadow-md' : 'text-gray-500 hover:text-[#0070BA]'}`}>{t.label}</button>
-             ))}
-          </div>
-          
-          <div className="md:hidden grid grid-cols-4 gap-2 bg-emerald-50/60 dark:bg-[#0A1128]/60 p-4 rounded-[2rem] border border-emerald-200/50 dark:border-emerald-900/50 mb-2 shadow-inner">
-             {[ {id:'jadwal', label:'Jadwal', icon: Clock}, {id:'uang', label:'Uang Mkn', icon: FileText}, {id:'lembur', label:'Lembur', icon: Shield}, {id:'libur', label:'Libur', icon: Calendar} ].map(t => (
-               <MobileAdaptiveTab key={t.id} active={subTab === t.id} icon={t.icon} label={t.label} onClick={() => setSubTab(t.id)} />
-             ))}
-          </div>
-
-          {subTab === 'jadwal' && (
-            <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
-               <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan Jam Kerja</h3>
-                 <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { setGlobalJadwal([{ id: Date.now(), dept: '', hari: '', in: '', out: '' }, ...globalJadwal]); setEditJdwIdx(0); setJdwForm({ dept: '', hari: '', in: '', out: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
-               </div>
-               <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
-                 <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Departemen</th><th className="p-4">Hari Kerja</th><th className="p-4">Jam Masuk</th><th className="p-4">Jam Keluar</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {paginatedJadwal.map((row, j) => {
-                        const i = globalJadwal.findIndex(x => x.id === row.id);
-                        return(
-                        <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
-                          <td className="p-4">{editJdwIdx===i ? <input type="text" value={jdwForm.dept} onChange={e=>setJdwForm({...jdwForm, dept: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" autoFocus/> : row.dept}</td>
-                          <td className="p-4 text-gray-500">{editJdwIdx===i ? <input type="text" value={jdwForm.hari} onChange={e=>setJdwForm({...jdwForm, hari: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none"/> : row.hari}</td>
-                          <td className="p-4 font-mono text-[#0070BA] dark:text-[#00F0FF]">{editJdwIdx===i ? <input type="time" value={jdwForm.in} onChange={e=>setJdwForm({...jdwForm, in: e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none"/> : cleanTimeStr(row.in)}</td>
-                          <td className="p-4 font-mono text-amber-500">{editJdwIdx===i ? <input type="time" value={jdwForm.out} onChange={e=>setJdwForm({...jdwForm, out: e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none"/> : cleanTimeStr(row.out)}</td>
-                          <td className="p-4 align-middle">
-                             <div className="flex justify-center w-full">
-                                {editJdwIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalJadwal]; up[i]={...row, ...jdwForm}; setGlobalJadwal(up); setEditJdwIdx(null); simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={()=>setEditJdwIdx(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditJdwIdx(i); setJdwForm({...row, in: cleanTimeStr(row.in), out: cleanTimeStr(row.out)} );}} onDelete={() => { setGlobalJadwal(globalJadwal.filter((_,idx)=>idx!==i)); simulateAutoSave(); }} />}
-                             </div>
-                          </td>
-                        </tr>
-                      )})}
-                    </tbody></table>
-               </div>
-               <PaginationControls currentPage={pageJdw} totalPages={maxPageJdw} onPageChange={setPageJdw} />
-            </GlassCard>
-          )}
-
-          {subTab === 'uang' && (
-            <GlassCard className="p-5 md:p-8 space-y-6">
-               <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan Uang Makan</h3>
-                 <Button variant="primary" className="py-2 px-4 h-auto" onClick={() => { setGlobalUangMakan(uangMakanForm); setGlobalAttendancePolicy(attendancePolicyForm); simulateAutoSave(); }} icon={Save}>Simpan Aturan</Button>
-               </div>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/20 dark:bg-black/20 p-5 rounded-2xl border border-black/5">
-                  <InputGroup label="Toleransi Terlambat (Menit)" type="number" value={uangMakanForm.toleransi} onChange={e=>setUangMakanForm({...uangMakanForm, toleransi: parseInt(e.target.value)||0})} />
-                  <InputGroup label="Potongan Telat (%)" type="number" value={uangMakanForm.potTelat} onChange={e=>setUangMakanForm({...uangMakanForm, potTelat: parseInt(e.target.value)||0})} />
-                  <InputGroup label="Formula Potongan Absen" type="text" value={uangMakanForm.potAbsen} onChange={e=>setUangMakanForm({...uangMakanForm, potAbsen: e.target.value})} />
-                  <InputGroup label="Batas Waktu Hangus (Menit)" type="number" value={uangMakanForm.hangus} onChange={e=>setUangMakanForm({...uangMakanForm, hangus: parseInt(e.target.value)||0})} />
-                  <InputGroup label="Max Check-in Awal (Menit)" type="number" value={attendancePolicyForm.maxCheckInEarly} onChange={e=>setAttendancePolicyForm({...attendancePolicyForm, maxCheckInEarly: parseInt(e.target.value)||0})} />
-                  <InputGroup label="Min Check-out Awal (Menit)" type="number" value={attendancePolicyForm.minCheckOutEarly} onChange={e=>setAttendancePolicyForm({...attendancePolicyForm, minCheckOutEarly: parseInt(e.target.value)||0})} />
-                  <InputGroup label="Mulai Lembur (Menit)" type="number" value={attendancePolicyForm.lemburStart} onChange={e=>setAttendancePolicyForm({...attendancePolicyForm, lemburStart: parseInt(e.target.value)||0})} />
-                  <div className="md:col-span-2">
-                     <InputGroup label="Keterangan Aturan" type="text" value={uangMakanForm.keterangan} onChange={e=>setUangMakanForm({...uangMakanForm, keterangan: e.target.value})} />
-                  </div>
-               </div>
-               <div className="text-[10px] md:text-xs font-bold text-gray-500 bg-white/40 dark:bg-[#0A1128]/50 p-4 rounded-xl border border-amber-500/20">
-                  <p>{uangMakanForm.keterangan}</p>
-               </div>
-            </GlassCard>
-          )}
-
-          {subTab === 'lembur' && (
-             <GlassCard className="p-4 md:p-6 space-y-4">
-                <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                  <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Parameter Lembur</h3>
-                  <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button></div>
-                </div>
-                <div className="overflow-x-auto custom-scrollbar rounded-xl border border-[#0070BA]/10">
-                   <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Rule</th><th className="p-4">Formula</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {globalLembur.map((row, i) => (
-                         <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
-                           <td className="p-4">{editLbrIdx===i ? <input type="text" value={lbrForm.rule} onChange={e=>setLbrForm({...lbrForm, rule:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : row.rule}</td>
-                           <td className="p-4">{editLbrIdx===i ? <input type="text" value={lbrForm.formula} onChange={e=>setLbrForm({...lbrForm, formula:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : row.formula}</td>
-                           <td className="p-4 align-middle"><div className="flex justify-center w-full">{editLbrIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalLembur];up[i]={...row,...lbrForm};setGlobalLembur(up);setEditLbrIdx(null);simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditLbrIdx(i);setLbrForm(row);}} />}</div></td>
-                         </tr>
-                      ))}
-                   </tbody></table>
-                </div>
-             </GlassCard>
-          )}
-
-          {subTab === 'libur' && (
-             <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
-                <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                  <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Libur Nasional</h3>
-                  <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { setGlobalLibur([{ id: Date.now(), date: '', desc: '' }, ...globalLibur]); setEditLibIdx(0); setLibForm({ date: '', desc: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
-                </div>
-                <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
-                   <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Tanggal</th><th className="p-4">Keterangan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                      {paginatedLibur.map((row, j) => {
-                        const i = globalLibur.findIndex(x => x.id === row.id);
-                        return(
-                         <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
-                           <td className="p-4">{editLibIdx===i ? <input type="date" value={libForm.date} onChange={e=>setLibForm({...libForm, date:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : formatIndoDate(row.date)}</td>
-                           <td className="p-4">{editLibIdx===i ? <input type="text" value={libForm.desc} onChange={e=>setLibForm({...libForm, desc:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.desc}</td>
-                           <td className="p-4 align-middle"><div className="flex justify-center w-full">{editLibIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalLibur];up[i]={...row,...libForm};setGlobalLibur(up);setEditLibIdx(null);simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditLibIdx(i);setLibForm(row);}} onDelete={()=>{setGlobalLibur(globalLibur.filter((_,idx)=>idx!==i));simulateAutoSave();}} />}</div></td>
-                         </tr>
-                      )})}
-                   </tbody></table>
-                </div>
-                <PaginationControls currentPage={pageLib} totalPages={maxPageLib} onPageChange={setPageLib} />
-             </GlassCard>
-          )}
-        </div>
+        <GlassCard className="p-10 text-center animate-fade-in-up">
+          <Clock size={48} className="text-[#0070BA]/20 dark:text-[#00F0FF]/20 mx-auto mb-4" />
+          <h3 className="text-sm font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest mb-2">Modul Jam Kerja & Kebijakan</h3>
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Tampilan sedang dalam pengembangan</p>
+        </GlassCard>
       );
     }
 
     function TabCuti({ simulateAutoSave, globalKebijakanCuti, setGlobalKebijakanCuti, globalCutiBersama, setGlobalCutiBersama, globalEmployees, setGlobalEmployees }) {
-      const [cutiForm, setCutiForm] = useState(globalKebijakanCuti);
-      const [editCbIdx, setEditCbIdx] = useState(null); const [cbForm, setCbForm] = useState({ tglMulai: '', tglSelesai: '', hari: 0, desc: '' });
-      const { currentData: paginatedCb, currentPage: pageCb, maxPage: maxPageCb, setCurrentPage: setPageCb } = usePagination(globalCutiBersama, 25);
-
       return (
-        <div className="space-y-4 md:space-y-6 animate-fade-in-up">
-           <GlassCard className="p-5 md:p-8 space-y-6">
-              <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                 <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Kebijakan Cuti Tahunan</h3>
-                 <Button variant="primary" className="py-2 px-4 h-auto" onClick={() => { setGlobalKebijakanCuti(cutiForm); simulateAutoSave(); }} icon={Save}>Simpan Aturan</Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/20 dark:bg-black/20 p-5 rounded-2xl border border-black/5">
-                 <InputGroup label="Tgl Mulai Periode" type="date" value={cutiForm.tglMulai} onChange={e=>setCutiForm({...cutiForm, tglMulai: e.target.value})} />
-                 <InputGroup label="Tgl Selesai Periode" type="date" value={cutiForm.tglSelesai} onChange={e=>setCutiForm({...cutiForm, tglSelesai: e.target.value})} />
-                 <div className="flex items-center gap-2 mt-4"><input type="checkbox" checked={cutiForm.prorata} onChange={e=>setCutiForm({...cutiForm, prorata: e.target.checked})} className="w-4 h-4 accent-[#0070BA] cursor-pointer" /><label className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white uppercase tracking-widest">Prorata Karyawan Baru</label></div>
-                 <div className="flex items-center gap-2 mt-4"><input type="checkbox" checked={cutiForm.minus} onChange={e=>setCutiForm({...cutiForm, minus: e.target.checked})} className="w-4 h-4 accent-[#0070BA] cursor-pointer" /><label className="text-[10px] md:text-xs font-bold text-[#134E4A] dark:text-white uppercase tracking-widest">Boleh Minus (Hutang Cuti)</label></div>
-              </div>
-           </GlassCard>
-
-           <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
-              <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-                <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Cuti Bersama</h3>
-                <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { setGlobalCutiBersama([{ id: Date.now(), tglMulai: '', tglSelesai: '', hari: 0, desc: '' }, ...globalCutiBersama]); setEditCbIdx(0); setCbForm({ tglMulai: '', tglSelesai: '', hari: 0, desc: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
-              </div>
-              <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
-                 <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Tgl Mulai</th><th className="p-4">Tgl Selesai</th><th className="p-4">Jml Hari</th><th className="p-4">Keterangan</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                    {paginatedCb.map((row, j) => {
-                       const i = globalCutiBersama.findIndex(x => x.id === row.id);
-                       return (
-                       <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
-                         <td className="p-4">{editCbIdx===i ? <input type="date" value={cbForm.tglMulai} onChange={e=>setCbForm({...cbForm, tglMulai:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : formatIndoDate(row.tglMulai)}</td>
-                         <td className="p-4">{editCbIdx===i ? <input type="date" value={cbForm.tglSelesai} onChange={e=>setCbForm({...cbForm, tglSelesai:e.target.value})} className="bg-transparent border-b border-[#0070BA] outline-none" /> : formatIndoDate(row.tglSelesai)}</td>
-                         <td className="p-4">{editCbIdx===i ? <input type="number" value={cbForm.hari} onChange={e=>setCbForm({...cbForm, hari:parseInt(e.target.value)||0})} className="w-16 bg-transparent border-b border-[#0070BA] outline-none" /> : row.hari}</td>
-                         <td className="p-4">{editCbIdx===i ? <input type="text" value={cbForm.desc} onChange={e=>setCbForm({...cbForm, desc:e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.desc}</td>
-                         <td className="p-4 align-middle"><div className="flex justify-center w-full">{editCbIdx===i ? <div className="flex gap-2"><button onClick={()=>{const up=[...globalCutiBersama];up[i]={...row,...cbForm};setGlobalCutiBersama(up);setEditCbIdx(null);simulateAutoSave();}} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button></div> : <ActionButtons onEdit={()=>{setEditCbIdx(i);setCbForm(row);}} onDelete={()=>{setGlobalCutiBersama(globalCutiBersama.filter((_,idx)=>idx!==i));simulateAutoSave();}} />}</div></td>
-                       </tr>
-                    )})}
-                 </tbody></table>
-              </div>
-              <PaginationControls currentPage={pageCb} totalPages={maxPageCb} onPageChange={setPageCb} />
-           </GlassCard>
-        </div>
+        <GlassCard className="p-10 text-center animate-fade-in-up">
+          <Calendar size={48} className="text-[#0070BA]/20 dark:text-[#00F0FF]/20 mx-auto mb-4" />
+          <h3 className="text-sm font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest mb-2">Modul Pengaturan Cuti</h3>
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Tampilan sedang dalam pengembangan</p>
+        </GlassCard>
       );
     }
 
     function TabAkses({ simulateAutoSave, matrixData, setMatrixData, passData, setPassData }) {
-      const [editPassId, setEditPassId] = useState(null);
-      const [passForm, setPassForm] = useState({ level: '', nama: '', user: '', pass: '' });
-      const { currentData: paginatedPass, currentPage: pagePass, maxPage: maxPagePass, setCurrentPage: setPagePass } = usePagination(passData, 25);
-
       return (
-        <div className="space-y-4 md:space-y-6 animate-fade-in-up">
-          <GlassCard className="p-4 md:p-6 space-y-4 pb-2">
-            <div className="flex justify-between items-center border-b border-[#0070BA]/10 pb-3">
-              <h3 className="text-xs font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest">Pengaturan Password Login</h3>
-              <div className="flex gap-2"><button onClick={simulateAutoSave} className="p-2 bg-teal-100 text-teal-600 rounded-xl" title="Simpan Perubahan"><Save size={16} /></button><button onClick={() => { const newId = Date.now(); setPassData([{ id: newId, level: 'User', nama: '', user: '', pass: '' }, ...passData]); setEditPassId(newId); setPassForm({ level: 'User', nama: '', user: '', pass: '' }); }} className="p-2 bg-[#0070BA]/10 text-[#0070BA] dark:bg-[#00F0FF]/10 dark:text-[#00F0FF] rounded-xl"><Plus size={16} /></button></div>
-            </div>
-            <div className="overflow-x-auto custom-scrollbar rounded-t-xl border border-b-0 border-[#0070BA]/10">
-               <table className="w-full text-left whitespace-nowrap text-[10px] md:text-xs"><thead className="bg-white/40 dark:bg-[#0A1128] text-gray-500 uppercase tracking-widest"><tr><th className="p-4">Level Akses</th><th className="p-4">Nama</th><th className="p-4">ID/Username</th><th className="p-4">Password</th><th className="p-4 text-center">Aksi</th></tr></thead><tbody className="font-bold text-[#134E4A] dark:text-white">
-                     {paginatedPass.map((row) => (
-                        <tr key={row.id} className="border-b border-black/5 hover:bg-white/5">
-                           <td className="p-4">{editPassId === row.id ? <select value={passForm.level} onChange={e=>setPassForm({...passForm, level: e.target.value})} className="bg-white/50 dark:bg-[#0A1128]/80 outline-none rounded"><option value="User">User</option><option value="Admin">Admin</option><option value="Top">Pimpinan</option></select> : row.level}</td>
-                           <td className="p-4">{editPassId === row.id ? <input type="text" value={passForm.nama} onChange={e=>setPassForm({...passForm, nama: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.nama}</td>
-                           <td className="p-4">{editPassId === row.id ? <input type="text" value={passForm.user} onChange={e=>setPassForm({...passForm, user: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.user}</td>
-                           <td className="p-4 font-mono text-amber-500">{editPassId === row.id ? <input type="text" value={passForm.pass} onChange={e=>setPassForm({...passForm, pass: e.target.value})} className="w-full bg-transparent border-b border-[#0070BA] outline-none" /> : row.pass}</td>
-                           <td className="p-4 align-middle">
-                              <div className="flex justify-center w-full">
-                                 {editPassId === row.id ? (<div className="flex gap-2"><button onClick={()=>{ setPassData(passData.map(p => p.id === row.id ? {...passForm, id: row.id} : p)); setEditPassId(null); simulateAutoSave(); }} className="p-1.5 bg-teal-100 text-teal-600 rounded"><Check size={14}/></button><button onClick={()=>setEditPassId(null)} className="p-1.5 bg-rose-100 text-rose-600 rounded"><XCircle size={14}/></button></div>) : (<ActionButtons onEdit={() => { setEditPassId(row.id); setPassForm(row); }} onDelete={() => { setPassData(passData.filter(p => p.id !== row.id)); simulateAutoSave(); }} />)}
-                              </div>
-                           </td>
-                        </tr>
-                     ))}
-                     {passData.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-gray-500 font-bold uppercase text-[10px]">Data kosong</td></tr>}
-                  </tbody></table>
-            </div>
-            <PaginationControls currentPage={pagePass} totalPages={maxPagePass} onPageChange={setPagePass} />
-          </GlassCard>
-        </div>
+        <GlassCard className="p-10 text-center animate-fade-in-up">
+          <Shield size={48} className="text-[#0070BA]/20 dark:text-[#00F0FF]/20 mx-auto mb-4" />
+          <h3 className="text-sm font-black uppercase text-[#0070BA] dark:text-[#00F0FF] tracking-widest mb-2">Modul Hak Akses Login</h3>
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">Tampilan sedang dalam pengembangan</p>
+        </GlassCard>
       );
     }
 

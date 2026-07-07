@@ -857,7 +857,8 @@
       const [isDataLoaded, setIsDataLoaded] = useState(false);
       const [globalPreviewPhoto, setGlobalPreviewPhoto] = useState(null);
 
-      const [uiSettings, setUiSettings] = useState({ logo: null, background: null, companyName: 'PT. Samudra Asia Engineering', companyAddress: 'Jl. Raya Perjuangan No. 1, Kebon Jeruk, Jakarta Barat', hrdName: 'Bpk. Andi Setiawan', hrdTitle: 'Head of HR & GA' });
+      const [uiSettings, setUiSettings] = useState({ logo:'https://lh3.googleusercontent.com/d/1IIaPJkIhNl69EaAwzKB3W4ijSdD9UeUg', background:'https://lh3.googleusercontent.com/d/1FFZKid9kV4lHZQaviA9jXENdPKwmYybu'
+, companyName: 'PT. Indo Agar Food', companyAddress: 'Jl. Raya Perjuangan No. 1, Kebon Jeruk, Jakarta Barat', hrdName: 'Bpk. Andi Setiawan', hrdTitle: 'Head of HR & GA' });
       const [payrollLabels, setPayrollLabels] = useState({ gapok: 'Gaji Pokok', tMakan: 'Tunj. Uang Makan', tJabatan: 'Tunj. Jabatan', tTransport: 'Tunj. Transportasi', tThr: 'Tunj. THR', tKes: 'Tunj. Kesehatan', tLain: 'Tunj. Lain-lain', insentif: 'Insentif', pAsuransi: 'Pot. Asuransi', pBpjsKs: 'Pot. BPJS KS', pBpjstk: 'Pot. BPJSTK', pPinjam: 'Pot. Pinjaman', pAbsen: 'Pot. Absen', pLain: 'Pot. Lainnya' });
       const [globalEmployees, setGlobalEmployees] = useState([
         { id: 'EMP01', nama: 'Budi Karyawan', jk: 'Laki-laki', phone: '0812345678', tglGabung: '2022-01-10', tmpLahir: 'Jakarta', tglLahir: '1990-05-15', ktp: '317000000000001', alamat: 'Jl. Sudirman No 1', pendidikan: 'S1', role: 'user', dept: 'Gudang', jabatan: 'Staff', atasan: 'Manager IT', sisaCuti: 10, gapok: 6000000, tMakan: 50000, tJabatan: 0, tTransport: 300000, tThr: 6000000, tKes: 200000, tLain: 0, insentif: 0, pAsuransi: 100000, pBpjsKs: 60000, pBpjstk: 120000, pPinjam: 0, pAbsen: 0, pLain: 0 },
